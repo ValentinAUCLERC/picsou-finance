@@ -405,6 +405,43 @@ def _parse_position(raw: Any) -> dict[str, Any] | None:
     }
 
 
+def _parse_fund_summary(sections: list[dict[str, Any]], account: dict[str, Any], account_id: str) -> dict[str, Any]:
+    """Normalise BoursoBank’s single-fund contract response.
+
+    This response reports the contract balance plus the owned fund unit rather
+    than the cash/valuation/positions trio used by PEA and CTO accounts.
+    """
+    total = _summary_money(account.get("balance"), "balance")
+    currency = _summary_currency(account.get("balance")) or text_value(account.get("currency"), 3)
+    if currency is not None and currency.upper() != "EUR":
+        raise AccountsFormatError(INVALID_DATA, f"Fund contract {account_id[:8]}… is denominated in {currency}")
+    funds = [section["fund"] for section in sections if isinstance(section.get("fund"), dict)]
+    if len(funds) != 1:
+        raise AccountsFormatError(FORMAT_CHANGED, "Fund contract has no unique fund node")
+    fund = funds[0]
+    label = text_value(fund.get("label"), 200)
+    isin = text_value(fund.get("isin"), 12)
+    quantity = decimal_value(fund.get("quantity"))
+    if label is None or isin is None or quantity is None:
+        raise AccountsFormatError(FORMAT_CHANGED, "Fund contract is missing its fund identity or quantity")
+    return {
+        "cashEur": Decimal("0"),
+        "totalEur": total,
+        "positions": [{
+            "isin": isin.upper() if _ISIN_RE.fullmatch(isin.upper()) else None,
+            "symbol": isin,
+            "label": label,
+            "quantity": quantity,
+            "buyingPriceEur": None,
+            "currentPrice": _summary_money(fund.get("price"), "fund price", required=False),
+            "quoteCurrency": currency.upper() if currency else None,
+            "currentValueEur": total,
+            "pnlEur": _summary_money(account.get("gainLoss"), "gainLoss", required=False),
+        }],
+    }
+
+
+
 def parse_trading_summary(payload: Any, account_id: str) -> dict[str, Any]:
     """Normalise one trading account's summary and prove it is complete.
 
@@ -427,6 +464,9 @@ def parse_trading_summary(payload: Any, account_id: str) -> dict[str, Any]:
     )
     if account is None:
         raise AccountsFormatError(FORMAT_CHANGED, "Trading summary has no account node")
+    if "cash" not in account and "balance" in account:
+        return _parse_fund_summary(sections, account, account_id)
+
 
     cash = _summary_money(account.get("cash"), "cash")
     valuation = _summary_money(account.get("valuation"), "valuation")

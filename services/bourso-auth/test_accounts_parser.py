@@ -363,6 +363,21 @@ class TradingSummaryTest(unittest.TestCase):
             parse_trading_summary(summary(positions=[position(amount=float("nan"))]), "acc")
 
 
+    def test_normalises_a_single_fund_contract_as_fully_invested(self):
+        payload = [
+            {"account": {"balance": money("350.00"), "currency": "EUR", "gainLoss": money("50.00")}},
+            {"fund": {
+                "isin": "IE00B4L5Y983", "label": "Example fund",
+                "quantity": "3.5", "price": money("100.00"),
+            }},
+        ]
+        parsed = parse_trading_summary(payload, "fund-contract")
+        self.assertEqual(parsed["cashEur"], Decimal("0"))
+        self.assertEqual(parsed["totalEur"], Decimal("350.00"))
+        self.assertEqual(len(parsed["positions"]), 1)
+        self.assertEqual(parsed["positions"][0]["currentValueEur"], Decimal("350.00"))
+
+
 class SymbolCollisionTest(unittest.TestCase):
     def test_lines_carrying_their_own_isin_never_collide(self):
         guard_symbol_collisions([

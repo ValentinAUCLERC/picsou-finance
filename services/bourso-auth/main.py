@@ -45,6 +45,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from accounts_parser import (
     AccountKind,
     AccountsFormatError,
+    describe_payload,
     guard_symbol_collisions,
     parse_dashboard,
     parse_trading_summary,
@@ -66,6 +67,7 @@ SECURISATION_PATH = "/securisation"
 FRAUD_EDUCATION_PATH = "/infos-profil/pedagogie-fraude"
 VALIDATION_PATH = "/securisation/validation"
 ACCOUNTS_PATH = "/dashboard/liste-comptes?rumroute=dashboard.new_accounts&_hinclude=1"
+IDENTITY_LIST_PATH = "/connexion/lister-identites"
 
 PENDING_TTL_SECONDS = 600
 PENDING_SWEEP_SECONDS = 30
@@ -101,6 +103,15 @@ _BAD_CREDENTIALS_MARKERS = (
     "Erreur d&#039;authentification",
     "Erreur d'authentification",
 )
+
+
+_IDENTITY_LINK_RE = re.compile(r"<a\b(?P<attrs>[^>]*)>(?P<body>.*?)</a>", flags=re.IGNORECASE | re.DOTALL)
+_IDENTITY_HREF_RE = re.compile(r"\bhref=[\x27\x22](?P<path>/connexion/changer-identite/[^\x27\x22]+)")
+_IDENTITY_LABEL_RE = re.compile(
+    r"<span\b[^>]*\bc-menu-list__label\b[^>]*>(?P<label>.*?)</span>",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+_PERSONAL_IDENTITY_EXCLUDED_PREFIXES = ("EI ", "EIRL ", "SAS ", "SASU ", "SARL ", "SCI ")
 
 
 # ─── Lifecycle ──────────────────────────────────────────────────────────────
@@ -419,8 +430,44 @@ async def _login(client: httpx.AsyncClient, customer_id: str, password: str) -> 
         raise HTTPException(status_code=502, detail="UPSTREAM_FORMAT_CHANGED")
 
 
+def _personal_identity_path(page: str) -> str:
+    """Return the sole non-business profile switch link from the selector page."""
+    candidates: list[tuple[str, str]] = []
+    for link in _IDENTITY_LINK_RE.finditer(page):
+        if "data-switch-account" not in link.group("attrs"):
+            continue
+        href = _IDENTITY_HREF_RE.search(link.group("attrs"))
+        label = _IDENTITY_LABEL_RE.search(link.group("body"))
+        if not href or not label:
+            continue
+        plain_label = html_module.unescape(re.sub(r"<[^>]+>", "", label.group("label"))).strip()
+        candidates.append((href.group("path"), plain_label))
+
+    personal_paths = [
+        path
+        for path, label in candidates
+        if not label.upper().startswith(_PERSONAL_IDENTITY_EXCLUDED_PREFIXES)
+    ]
+    if len(personal_paths) != 1:
+        raise AccountsFormatError(
+            "UPSTREAM_FORMAT_CHANGED",
+            "Identity selector did not expose a unique personal profile",
+        )
+    return personal_paths[0]
+
+
 async def _home(client: httpx.AsyncClient) -> str:
-    return (await client.get("/", follow_redirects=True)).text
+    response = await client.get("/", follow_redirects=True)
+    if response.url.path != IDENTITY_LIST_PATH:
+        return response.text
+
+    response = await client.get(_personal_identity_path(response.text), follow_redirects=True)
+    if response.url.path == IDENTITY_LIST_PATH:
+        raise AccountsFormatError(
+            "UPSTREAM_FORMAT_CHANGED", "Personal identity selection returned to the selector"
+        )
+    log.info("BoursoBank selected the configured personal identity")
+    return response.text
 
 
 def is_fraud_education_page(home: str) -> bool:
@@ -565,7 +612,15 @@ async def _fetch_trading_account(
         raise AccountsFormatError(
             "UPSTREAM_FORMAT_CHANGED", "Trading summary was not JSON"
         ) from exc
-    return parse_trading_summary(payload, account_id)
+    try:
+        return parse_trading_summary(payload, account_id)
+    except AccountsFormatError:
+        log.warning(
+            "BoursoBank trading summary has an unsupported shape for account %s…: %s",
+            account_id[:8],
+            describe_payload(payload),
+        )
+        raise
 
 
 async def _collect_accounts(client: httpx.AsyncClient) -> list[AccountPayload]:

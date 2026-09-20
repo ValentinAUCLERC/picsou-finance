@@ -18,6 +18,7 @@ from main import (
     BASE_URL,
     AccountsRequest,
     _collect_accounts,
+    _personal_identity_path,
     _json_success,
     _strong_auth_params,
     extract_brs_config,
@@ -169,6 +170,33 @@ class ExtractorTest(unittest.TestCase):
         self.assertFalse(_json_success(httpx.Response(200, json={"success": False})))
         self.assertFalse(_json_success(httpx.Response(200, json={})))
         self.assertFalse(_json_success(httpx.Response(200, text="<html>")))
+
+
+class IdentitySelectionTest(unittest.TestCase):
+    def test_selects_the_only_non_business_identity(self):
+        page = """
+        <a href="/connexion/changer-identite/business" class="c-menu-list__link" data-switch-account>
+          <span class="c-menu-list__label">EI EXAMPLE</span>
+        </a>
+        <a href="/connexion/changer-identite/personal" class="c-menu-list__link" data-switch-account>
+          <span class="c-menu-list__label">Example Person</span>
+        </a>
+        """
+        self.assertEqual(_personal_identity_path(page), "/connexion/changer-identite/personal")
+
+    def test_refuses_an_ambiguous_identity_selector(self):
+        page = """
+        <a href="/connexion/changer-identite/first" data-switch-account>
+          <span class="c-menu-list__label">First Person</span>
+        </a>
+        <a href="/connexion/changer-identite/second" data-switch-account>
+          <span class="c-menu-list__label">Second Person</span>
+        </a>
+        """
+        with self.assertRaises(AccountsFormatError) as raised:
+            _personal_identity_path(page)
+        self.assertEqual(raised.exception.code, "UPSTREAM_FORMAT_CHANGED")
+
 
 
 class CookieStateTest(unittest.TestCase):
