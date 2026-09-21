@@ -50,7 +50,7 @@ SECTION_PATTERNS = {
 }
 
 _ACCOUNT_RE = re.compile(
-    r"/compte/(.*?)?/?(?P<id>[a-f0-9]{32})/(.*?)"
+    r"/compte/(?P<route>.*?)?/?(?P<id>[a-f0-9]{32})/(.*?)"
     r"Solde\s:\s(?P<balance>[\d\s\u00a0\u2212-]+,?\d{0,2})\s€"
     r".+?c-info-box__account-label.+?>(?P<name>.+?)</span>"
     r".+?c-info-box__account-sub-label.+?>(?P<bank>.+?)</span>",
@@ -292,6 +292,10 @@ def parse_dashboard(html: str) -> tuple[list[dict[str, Any]], int]:
                 accounts.append(
                     {
                         "id": account_id,
+                        # BoursoBank currently exposes PEA and PEA-PME cards
+                        # under the `ord` route too. Keep the server-provided
+                        # route instead of reconstructing it from the label.
+                        "route": match.group("route").strip("/"),
                         "name": name,
                         "type": account_type(section, name),
                         "balanceEur": balance,

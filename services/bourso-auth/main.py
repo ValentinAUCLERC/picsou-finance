@@ -782,13 +782,19 @@ async def _collect_trades(client: httpx.AsyncClient) -> list[TradePayload]:
     for account in accounts:
         if account["section"] != "trading":
             continue
-        route = "pea" if "PEA" in account["name"].upper().replace("_", " ") else "ord"
-        base_path = f"/compte/{route}/{account['id']}"
+        base_path = f"/compte/{account['route']}/{account['id']}"
+        # PEA and PEA-PME share BoursoBank's `ord` URL namespace. The
+        # accountType query string is what switches the movements component
+        # to the PEA view.
+        movement_params = {"accountType": "pea"} if account["type"] == "PEA" else {}
         # The public URL is an application shell. Bourso's own movements
         # component asks the server for this hinclude fragment, which contains
         # the list rows and their detail-operation links.
         response = await client.get(
-            base_path + "/mouvements", params={"_hinclude": "1"}, follow_redirects=True
+            base_path + "/mouvements",
+            params=movement_params,
+            headers={"X-Requested-With": "XMLHttpRequest"},
+            follow_redirects=True,
         )
         if response.status_code in (401, 403):
             raise HTTPException(status_code=401, detail="SESSION_EXPIRED")
