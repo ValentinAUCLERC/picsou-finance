@@ -100,6 +100,7 @@ _FORM_TOKEN_RE = re.compile(
 )
 _API_URL_RE = re.compile(r'"API_URL"\s*:\s*"(?P<url>[^"]+)"')
 _USER_HASH_RE = re.compile(r'"USER_HASH"\s*:\s*"(?P<hash>[^"]+)"')
+_DEFAULT_API_BEARER_RE = re.compile(r'"DEFAULT_API_BEARER"\s*:\s*"(?P<token>[^"]+)"')
 _STRONG_AUTH_RE = re.compile(r'data-strong-authentication-payload="(?P<payload>[^"]*)"')
 _LOGGED_IN_MARKER = 'href="/se-deconnecter"'
 _BAD_CREDENTIALS_MARKERS = (
@@ -393,6 +394,11 @@ def extract_brs_config(page: str) -> tuple[str, str]:
     return api_url.replace("\\/", "/").rstrip("/"), user_hash
 
 
+def extract_default_api_bearer(page: str) -> str | None:
+    """Return BoursoBank's short-lived browser API token, if one is present."""
+    return _first_group(_DEFAULT_API_BEARER_RE.search(page), "token")
+
+
 async def _bootstrap(client: httpx.AsyncClient) -> str:
     """Clear the `__brs_mit` cookie gate and return the real login page.
 
@@ -604,11 +610,17 @@ async def _confirm_validation(client: httpx.AsyncClient, validation_token: str) 
 
 async def _fetch_trading_account(
     client: httpx.AsyncClient, api_url: str, user_hash: str, account_id: str,
-    account_path: str | None = None,
+    account_path: str | None = None, api_bearer: str | None = None,
 ) -> dict[str, Any]:
     response: httpx.Response | None = None
     account_api_url, account_user_hash = api_url, user_hash
+    account_api_bearer = api_bearer
     for attempt in range(TRADING_SUMMARY_ATTEMPTS):
+        headers = {"Accept": "application/json"}
+        if account_api_bearer:
+            headers["Authorization"] = f"Bearer {account_api_bearer}"
+        if account_path:
+            headers["Referer"] = f"{BASE_URL}{account_path}"
         response = await client.get(
             f"{account_api_url}/_user_/_{account_user_hash}_/trading/accounts/summary/{account_id}",
             params={
@@ -616,7 +628,7 @@ async def _fetch_trading_account(
                 "position": "ACCOUNTING",
                 "responseFormat": "true",
             },
-            headers={"Accept": "application/json"},
+            headers=headers,
         )
         # On some profile configurations the dashboard's global BRS_CONFIG is
         # accepted by the web pages but rejected (404) by the trading service.
@@ -646,6 +658,7 @@ async def _fetch_trading_account(
                 )
                 try:
                     account_api_url, account_user_hash = extract_brs_config(account_page.text)
+                    account_api_bearer = extract_default_api_bearer(account_page.text)
                     log.info("BoursoBank: retrying summary with account-scoped API configuration")
                 except AccountsFormatError:
                     pass
@@ -694,6 +707,7 @@ async def _collect_accounts(client: httpx.AsyncClient) -> list[AccountPayload]:
     if _LOGGED_IN_MARKER not in home:
         raise HTTPException(status_code=401, detail="SESSION_EXPIRED")
     api_url, user_hash = extract_brs_config(home)
+    api_bearer = extract_default_api_bearer(home)
 
     dashboard = (await client.get(ACCOUNTS_PATH, headers={"X-Requested-With": "XMLHttpRequest"})).text
     accounts, third_party = parse_dashboard(dashboard)
@@ -721,6 +735,7 @@ async def _collect_accounts(client: httpx.AsyncClient) -> list[AccountPayload]:
             summary = await _fetch_trading_account(
                 client, api_url, user_hash, account["id"],
                 f"/compte/{account['route']}/{account['id']}",
+                api_bearer,
             )
             # The trading board is authoritative over the dashboard tile: it is
             # the figure the two reconciliations above were run against.
