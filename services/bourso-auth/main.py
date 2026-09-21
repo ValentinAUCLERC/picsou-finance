@@ -102,6 +102,7 @@ _API_URL_RE = re.compile(r'"API_URL"\s*:\s*"(?P<url>[^"]+)"')
 _USER_HASH_RE = re.compile(r'"USER_HASH"\s*:\s*"(?P<hash>[^"]+)"')
 _DEFAULT_API_BEARER_RE = re.compile(r'"DEFAULT_API_BEARER"\s*:\s*"(?P<token>[^"]+)"')
 _API_REFERER_FEATURE_ID_RE = re.compile(r'"API_REFERER_FEATURE_ID"\s*:\s*"(?P<value>[^"]+)"')
+_JWT_TOKEN_ID_RE = re.compile(r'"JWT_TOKEN_ID"\s*:\s*"(?P<value>[^"]+)"')
 _STRONG_AUTH_RE = re.compile(r'data-strong-authentication-payload="(?P<payload>[^"]*)"')
 _LOGGED_IN_MARKER = 'href="/se-deconnecter"'
 _BAD_CREDENTIALS_MARKERS = (
@@ -404,6 +405,18 @@ def extract_api_referer_feature_id(page: str) -> str | None:
     return _first_group(_API_REFERER_FEATURE_ID_RE.search(page), "value")
 
 
+def extract_jwt_token_id(page: str) -> str | None:
+    return _first_group(_JWT_TOKEN_ID_RE.search(page), "value")
+
+
+def _cookie_value(client: httpx.AsyncClient, name: str | None) -> str | None:
+    if not name:
+        return None
+    # CookieJar.get() raises when the same name is scoped to several domains;
+    # the browser simply picks the first matching cookie for this session.
+    return next((cookie.value for cookie in client.cookies.jar if cookie.name == name), None)
+
+
 async def _bootstrap(client: httpx.AsyncClient) -> str:
     """Clear the `__brs_mit` cookie gate and return the real login page.
 
@@ -617,15 +630,18 @@ async def _fetch_trading_account(
     client: httpx.AsyncClient, api_url: str, user_hash: str, account_id: str,
     account_path: str | None = None, api_bearer: str | None = None,
     api_referer_feature_id: str | None = None,
+    jwt_token_id: str | None = None,
 ) -> dict[str, Any]:
     response: httpx.Response | None = None
     account_api_url, account_user_hash = api_url, user_hash
     account_api_bearer = api_bearer
     account_api_referer_feature_id = api_referer_feature_id
+    account_jwt_token_id = jwt_token_id
     for attempt in range(TRADING_SUMMARY_ATTEMPTS):
         headers = {"Accept": "application/json", "Content-Type": "application/json"}
-        if account_api_bearer:
-            headers["Authorization"] = f"Bearer {account_api_bearer}"
+        bearer = _cookie_value(client, account_jwt_token_id) or account_api_bearer
+        if bearer:
+            headers["Authorization"] = f"Bearer {bearer}"
         if account_api_referer_feature_id:
             headers["X-Referer-Feature-Id"] = account_api_referer_feature_id
         response = await client.get(
@@ -667,6 +683,7 @@ async def _fetch_trading_account(
                     account_api_url, account_user_hash = extract_brs_config(account_page.text)
                     account_api_bearer = extract_default_api_bearer(account_page.text)
                     account_api_referer_feature_id = extract_api_referer_feature_id(account_page.text)
+                    account_jwt_token_id = extract_jwt_token_id(account_page.text)
                     log.info("BoursoBank: retrying summary with account-scoped API configuration")
                 except AccountsFormatError:
                     pass
@@ -717,6 +734,7 @@ async def _collect_accounts(client: httpx.AsyncClient) -> list[AccountPayload]:
     api_url, user_hash = extract_brs_config(home)
     api_bearer = extract_default_api_bearer(home)
     api_referer_feature_id = extract_api_referer_feature_id(home)
+    jwt_token_id = extract_jwt_token_id(home)
 
     dashboard = (await client.get(ACCOUNTS_PATH, headers={"X-Requested-With": "XMLHttpRequest"})).text
     accounts, third_party = parse_dashboard(dashboard)
@@ -746,6 +764,7 @@ async def _collect_accounts(client: httpx.AsyncClient) -> list[AccountPayload]:
                 f"/compte/{account['route']}/{account['id']}",
                 api_bearer,
                 api_referer_feature_id,
+                jwt_token_id,
             )
             # The trading board is authoritative over the dashboard tile: it is
             # the figure the two reconciliations above were run against.

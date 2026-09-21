@@ -25,6 +25,7 @@ from main import (
     extract_brs_config,
     extract_api_referer_feature_id,
     extract_default_api_bearer,
+    extract_jwt_token_id,
     extract_form_token,
     is_fraud_education_page,
     restore_cookies,
@@ -123,8 +124,9 @@ class ExtractorTest(unittest.TestCase):
         )
 
     def test_reads_current_trading_api_headers_from_brs_config(self):
-        page = '<script>window.BRS_CONFIG = {"DEFAULT_API_BEARER":"jwt-token", "API_REFERER_FEATURE_ID":"customer.accounts_trading_ord_positions.web_fr_front_20"};</script>'
-        self.assertEqual(extract_default_api_bearer(page), "jwt-token")
+        page = '<script>window.BRS_CONFIG = {"DEFAULT_API_BEARER":"default-token", "JWT_TOKEN_ID":"brsxds_customer", "API_REFERER_FEATURE_ID":"customer.accounts_trading_ord_positions.web_fr_front_20"};</script>'
+        self.assertEqual(extract_default_api_bearer(page), "default-token")
+        self.assertEqual(extract_jwt_token_id(page), "brsxds_customer")
         self.assertEqual(
             extract_api_referer_feature_id(page),
             "customer.accounts_trading_ord_positions.web_fr_front_20",
