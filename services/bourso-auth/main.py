@@ -784,7 +784,12 @@ async def _collect_trades(client: httpx.AsyncClient) -> list[TradePayload]:
             continue
         route = "pea" if "PEA" in account["name"].upper().replace("_", " ") else "ord"
         base_path = f"/compte/{route}/{account['id']}"
-        response = await client.get(base_path + "/mouvements", follow_redirects=True)
+        # The public URL is an application shell. Bourso's own movements
+        # component asks the server for this hinclude fragment, which contains
+        # the list rows and their detail-operation links.
+        response = await client.get(
+            base_path + "/mouvements", params={"_hinclude": "1"}, follow_redirects=True
+        )
         if response.status_code in (401, 403):
             raise HTTPException(status_code=401, detail="SESSION_EXPIRED")
         if response.status_code != 200:
