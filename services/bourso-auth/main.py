@@ -79,6 +79,7 @@ PENDING_SWEEP_SECONDS = 30
 APP_VALIDATION_TIMEOUT_SECONDS = 120
 APP_VALIDATION_POLL_SECONDS = 2.0
 REQUEST_TIMEOUT_SECONDS = 30.0
+TRADING_SUMMARY_ATTEMPTS = 3
 # Every pending second factor pins an httpx client and its cookie jar. Cheap
 # next to a browser, but the backend's per-IP throttle does not bound this
 # service in aggregate.
@@ -604,15 +605,26 @@ async def _confirm_validation(client: httpx.AsyncClient, validation_token: str) 
 async def _fetch_trading_account(
     client: httpx.AsyncClient, api_url: str, user_hash: str, account_id: str
 ) -> dict[str, Any]:
-    response = await client.get(
-        f"{api_url}/_user_/_{user_hash}_/trading/accounts/summary/{account_id}",
-        params={
-            "_host": "tradingboard.boursobank.com",
-            "position": "ACCOUNTING",
-            "responseFormat": "true",
-        },
-        headers={"Accept": "application/json"},
-    )
+    response: httpx.Response | None = None
+    for attempt in range(TRADING_SUMMARY_ATTEMPTS):
+        response = await client.get(
+            f"{api_url}/_user_/_{user_hash}_/trading/accounts/summary/{account_id}",
+            params={
+                "_host": "tradingboard.boursobank.com",
+                "position": "ACCOUNTING",
+                "responseFormat": "true",
+            },
+            headers={"Accept": "application/json"},
+        )
+        if response.status_code not in {429, 500, 502, 503, 504} or attempt == TRADING_SUMMARY_ATTEMPTS - 1:
+            break
+        delay = 0.4 * (attempt + 1)
+        log.info(
+            "BoursoBank trading summary is temporarily unavailable for account %s…; retrying in %.1fs",
+            account_id[:8], delay,
+        )
+        await asyncio.sleep(delay)
+    assert response is not None
     if response.status_code in (401, 403):
         raise HTTPException(status_code=401, detail="SESSION_EXPIRED")
     if response.status_code != 200:
