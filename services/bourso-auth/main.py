@@ -616,7 +616,10 @@ async def _fetch_trading_account(
             },
             headers={"Accept": "application/json"},
         )
-        if response.status_code not in {429, 500, 502, 503, 504} or attempt == TRADING_SUMMARY_ATTEMPTS - 1:
+        # Bourso's trading gateway has been observed returning 404 while its
+        # backend is degraded, then 503 on the next request. It is not a page
+        # format change: retry it with the other transient gateway failures.
+        if response.status_code not in {404, 429, 500, 502, 503, 504} or attempt == TRADING_SUMMARY_ATTEMPTS - 1:
             break
         delay = 0.4 * (attempt + 1)
         log.info(
@@ -633,7 +636,7 @@ async def _fetch_trading_account(
             account_id[:8],
             response.status_code,
         )
-        if response.status_code == 429 or response.status_code >= 500:
+        if response.status_code in {404, 429} or response.status_code >= 500:
             raise HTTPException(status_code=502, detail="UPSTREAM_UNAVAILABLE")
         raise HTTPException(status_code=502, detail="UPSTREAM_FORMAT_CHANGED")
     try:
@@ -678,6 +681,10 @@ async def _collect_accounts(client: httpx.AsyncClient) -> list[AccountPayload]:
             "snapshotComplete": True,
         }
         if account["section"] == "trading":
+            log.info(
+                "BoursoBank: loading trading account %s (route=%s; id=%s…)",
+                account["name"], account["route"], account["id"][:8],
+            )
             summary = await _fetch_trading_account(client, api_url, user_hash, account["id"])
             # The trading board is authoritative over the dashboard tile: it is
             # the figure the two reconciliations above were run against.
