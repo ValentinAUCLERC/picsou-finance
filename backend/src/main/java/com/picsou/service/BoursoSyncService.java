@@ -217,6 +217,16 @@ public class BoursoSyncService {
             }
         } catch (SyncException ex) {
             BoursoErrorCode code = codeOf(ex);
+            // BoursoBank's trading summary endpoint can fail independently of
+            // its authenticated movements pages. Holdings must remain
+            // untouched when that snapshot is unavailable, but executed
+            // securities movements are supplementary and can still improve
+            // the historical lots of the existing accounts.
+            if (code == BoursoErrorCode.UPSTREAM_UNAVAILABLE
+                || code == BoursoErrorCode.UPSTREAM_FORMAT_CHANGED) {
+                log.info("BoursoBank account snapshot unavailable; attempting detailed movements import (member={})", job.memberId());
+                importTrades(job);
+            }
             markFailed(job, code);
             log.warn("BoursoBank sync failed (member={}; code={})", job.memberId(), code);
         } catch (Exception ex) {
