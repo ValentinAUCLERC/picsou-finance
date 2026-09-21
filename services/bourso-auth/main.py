@@ -33,7 +33,7 @@ import re
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Literal
 from urllib.parse import urljoin
@@ -691,6 +691,10 @@ _DETAIL_ID_RE = re.compile(r"data-modal-alert-behavior=[\"'][^\"']*?(?P<id>\d+)"
 _CONTINUATION_TOKEN_RE = re.compile(
     r"data-operations-next-pagination=[\"'](?P<token>[^\"']+)", re.IGNORECASE
 )
+_NEXT_HISTORY_PAGE_RE = re.compile(
+    r"<li\b[^>]*\bpagination__next\b[^>]*>.*?<a\b[^>]*\bhref=[\"'](?P<href>[^\"']+)",
+    re.IGNORECASE | re.DOTALL,
+)
 _ISIN_IN_TEXT_RE = re.compile(r"\b([A-Z]{2}[A-Z0-9]{9}\d)\b")
 
 
@@ -789,7 +793,15 @@ async def _collect_trades(client: httpx.AsyncClient) -> list[TradePayload]:
         # PEA and PEA-PME share BoursoBank's `ord` URL namespace. The
         # accountType query string is what switches the movements component
         # to the PEA view.
-        movement_params = {"rumroute": "accounts.bank.movements"}
+        # The title-history view has a deliberately narrow default period.
+        # Request the whole available range, then preserve BoursoBank's own
+        # pagination so a line starts at its actual acquisition date.
+        movement_params = {
+            "rumroute": "accounts.bank.movements",
+            "_hinclude": "1",
+            "movementSearch[fromDate]": "01/01/2000",
+            "movementSearch[toDate]": (datetime.now().date() + timedelta(days=40)).strftime("%d/%m/%Y"),
+        }
         if account["type"] == "PEA":
             movement_params["accountType"] = "pea"
         # The public URL is an application shell. Bourso's own movements
@@ -821,7 +833,23 @@ async def _collect_trades(client: httpx.AsyncClient) -> list[TradePayload]:
                 raise HTTPException(status_code=401, detail="SESSION_EXPIRED")
             if fragment.status_code == 200:
                 response = fragment
-        history = _history_rows(response.text)
+        pages = [response.text]
+        # The legacy investment pages use a regular next-page link rather
+        # than the continuation token used by banking-account movements.
+        next_page = _NEXT_HISTORY_PAGE_RE.search(response.text)
+        while next_page and len(pages) < 250:
+            paged = await client.get(
+                urljoin(BASE_URL, html_module.unescape(next_page.group("href"))),
+                headers={"X-Requested-With": "XMLHttpRequest"},
+                follow_redirects=True,
+            )
+            if paged.status_code in (401, 403):
+                raise HTTPException(status_code=401, detail="SESSION_EXPIRED")
+            if paged.status_code != 200 or paged.text in pages:
+                break
+            pages.append(paged.text)
+            next_page = _NEXT_HISTORY_PAGE_RE.search(paged.text)
+        history = [row for page in pages for row in _history_rows(page)]
         if not history:
             headers = []
             for table_match in _TABLE_RE.finditer(response.text):
