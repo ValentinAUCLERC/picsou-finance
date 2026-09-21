@@ -801,6 +801,11 @@ async def _collect_trades(client: httpx.AsyncClient) -> list[TradePayload]:
                 "BoursoBank movements page has no recognised detail rows (account=%s…; tables=%s; modalLinks=%d)",
                 account["id"][:8], headers[:4], len(_DETAIL_ID_RE.findall(response.text)),
             )
+            scripts = re.findall(r"<script[^>]+(?:src=[\"'](?P<src>[^\"']+))?[^>]*>", response.text, re.IGNORECASE)
+            log.info(
+                "BoursoBank movements shell diagnostic (account=%s…; scriptSrc=%s; prefix=%s)",
+                account["id"][:8], [src for src in scripts if src][:20], _log_safe(response.text[:4000]),
+            )
         for date, operation, detail_id in history:
             detail = await client.get(f"{base_path}/mouvement/{detail_id}", follow_redirects=True)
             if detail.status_code in (401, 403):
