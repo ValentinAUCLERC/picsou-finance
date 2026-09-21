@@ -751,6 +751,25 @@ def _history_rows(page: str) -> list[tuple[str, str, str]]:
     return out
 
 
+def _movement_table_signature(page: str) -> list[dict[str, Any]]:
+    """Describe the rendered movement tables without retaining their HTML."""
+    signatures: list[dict[str, Any]] = []
+    for table_match in _TABLE_RE.finditer(page):
+        rows = list(_ROW_RE.finditer(table_match.group("table")))
+        if not rows:
+            continue
+        cells_by_row = [
+            [_plain(cell.group("cell"))[:120] for cell in _CELL_RE.finditer(row.group("row"))]
+            for row in rows
+        ]
+        signatures.append({
+            "headers": cells_by_row[0],
+            "sampleRows": [cells for cells in cells_by_row[1:3] if cells],
+            "detailLinks": len(_DETAIL_ID_RE.findall(table_match.group("table"))),
+        })
+    return signatures
+
+
 def _trade_side(operation: str) -> str | None:
     normalized = _plain(operation).lower()
     if any(word in normalized for word in ("vente", "rachat", "désinvest", "desinvest")):
@@ -824,6 +843,7 @@ async def _collect_trades(client: httpx.AsyncClient) -> list[TradePayload]:
             continue
         form_token = extract_form_token(response.text)
         pages = []
+        monthly_signatures: list[tuple[str, list[dict[str, Any]]]] = []
         # BoursoBank's trading history is a form with one selectable calendar
         # month, not the usual account-movement paginator. Query every month
         # individually so lots are backfilled only from their real activity.
@@ -844,6 +864,9 @@ async def _collect_trades(client: httpx.AsyncClient) -> list[TradePayload]:
                 raise HTTPException(status_code=401, detail="SESSION_EXPIRED")
             if monthly.status_code == 200:
                 pages.append(monthly.text)
+                signature = _movement_table_signature(monthly.text)
+                if any(item["sampleRows"] for item in signature):
+                    monthly_signatures.append((period, signature))
         history = [row for page in pages for row in _history_rows(page)]
         if not history:
             headers = []
@@ -852,8 +875,8 @@ async def _collect_trades(client: httpx.AsyncClient) -> list[TradePayload]:
                 if first:
                     headers.append([_plain(cell.group("cell"))[:60] for cell in _CELL_RE.finditer(first.group("row"))])
             log.info(
-                "BoursoBank movements page has no recognised detail rows (account=%s…; tables=%s; modalLinks=%d)",
-                account["id"][:8], headers[:4], len(_DETAIL_ID_RE.findall(response.text)),
+                "BoursoBank movements page has no recognised detail rows (account=%s…; initialTables=%s; monthlyTables=%s)",
+                account["id"][:8], headers[:4], monthly_signatures[:3],
             )
         for date, operation, detail_id in history:
             detail = await client.get(f"{base_path}/mouvement/{detail_id}", follow_redirects=True)
