@@ -790,7 +790,18 @@ async def _collect_trades(client: httpx.AsyncClient) -> list[TradePayload]:
         if response.status_code != 200:
             log.info("BoursoBank movements unavailable for account %s… (HTTP %s)", account["id"][:8], response.status_code)
             continue
-        for date, operation, detail_id in _history_rows(response.text):
+        history = _history_rows(response.text)
+        if not history:
+            headers = []
+            for table_match in _TABLE_RE.finditer(response.text):
+                first = _ROW_RE.search(table_match.group("table"))
+                if first:
+                    headers.append([_plain(cell.group("cell"))[:60] for cell in _CELL_RE.finditer(first.group("row"))])
+            log.info(
+                "BoursoBank movements page has no recognised detail rows (account=%s…; tables=%s; modalLinks=%d)",
+                account["id"][:8], headers[:4], len(_DETAIL_ID_RE.findall(response.text)),
+            )
+        for date, operation, detail_id in history:
             detail = await client.get(f"{base_path}/mouvement/{detail_id}", follow_redirects=True)
             if detail.status_code in (401, 403):
                 raise HTTPException(status_code=401, detail="SESSION_EXPIRED")
