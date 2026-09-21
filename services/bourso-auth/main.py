@@ -623,12 +623,22 @@ async def _fetch_trading_account(
         # The account page carries the account-scoped configuration, so use it
         # before declaring the trading gateway unavailable.
         if response.status_code == 404 and attempt == 0 and account_path:
+            log.info(
+                "BoursoBank trading summary 404 body (account=%s…): %s",
+                account_id[:8], response.text[:2_000],
+            )
             account_page = await client.get(
                 account_path,
                 headers={"X-Requested-With": "XMLHttpRequest"},
                 follow_redirects=True,
             )
             if account_page.status_code == 200:
+                log.info(
+                    "BoursoBank positions page structure (account=%s…; tables=%s; positionLinks=%s)",
+                    account_id[:8],
+                    _movement_table_signature(account_page.text)[:5],
+                    re.findall(r'(?:src|href)=["\']([^"\']*positions[^"\']*)', account_page.text)[:10],
+                )
                 try:
                     account_api_url, account_user_hash = extract_brs_config(account_page.text)
                     log.info("BoursoBank: retrying summary with account-scoped API configuration")
