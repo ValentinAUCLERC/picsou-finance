@@ -1,28 +1,41 @@
 export type AccountType =
-  | 'LEP' | 'LIVRET_A' | 'LDDS' | 'LIVRET_JEUNE' | 'PEL' | 'CEL'
-  | 'PEA' | 'COMPTE_TITRES' | 'CRYPTO' | 'CHECKING' | 'SAVINGS'
-  | 'REAL_ESTATE' | 'LOAN' | 'EMPLOYEE_SAVINGS' | 'OTHER'
+  | "LEP"
+  | "LIVRET_A"
+  | "LDDS"
+  | "LIVRET_JEUNE"
+  | "PEL"
+  | "CEL"
+  | "PEA"
+  | "COMPTE_TITRES"
+  | "CRYPTO"
+  | "CHECKING"
+  | "SAVINGS"
+  | "REAL_ESTATE"
+  | "LOAN"
+  | "EMPLOYEE_SAVINGS"
+  | "OTHER"
 
-export type PropertyKind = 'HOUSE' | 'APARTMENT' | 'BUILDING' | 'LAND' | 'PARKING' | 'COMMERCIAL'
+export type PropertyKind =
+  "HOUSE" | "APARTMENT" | "BUILDING" | "LAND" | "PARKING" | "COMMERCIAL"
 
 export type PropertyCategory =
-  | 'PRIMARY_RESIDENCE' | 'SECONDARY_RESIDENCE' | 'RENTAL' | 'LAND' | 'OTHER'
+  "PRIMARY_RESIDENCE" | "SECONDARY_RESIDENCE" | "RENTAL" | "LAND" | "OTHER"
 
 /** Only houses and apartments have a reliable price per m² in the open data. */
-export const ESTIMABLE_PROPERTY_KINDS: PropertyKind[] = ['HOUSE', 'APARTMENT']
+export const ESTIMABLE_PROPERTY_KINDS: PropertyKind[] = ["HOUSE", "APARTMENT"]
 
-export type ValuationMode = 'ESTIMATED' | 'MANUAL'
+export type ValuationMode = "ESTIMATED" | "MANUAL"
 
-export type ValuationConfidence = 'HIGH' | 'MEDIUM' | 'LOW'
+export type ValuationConfidence = "HIGH" | "MEDIUM" | "LOW"
 
 export type ValuationStatus =
-  | 'OK'
-  | 'UNSUPPORTED_AREA'
-  | 'NOT_ESTIMABLE'
-  | 'INCOMPLETE_DATA'
-  | 'GEOCODING_FAILED'
-  | 'NO_COMPARABLE_DATA'
-  | 'PROVIDER_UNAVAILABLE'
+  | "OK"
+  | "UNSUPPORTED_AREA"
+  | "NOT_ESTIMABLE"
+  | "INCOMPLETE_DATA"
+  | "GEOCODING_FAILED"
+  | "NO_COMPARABLE_DATA"
+  | "PROVIDER_UNAVAILABLE"
 
 export interface RealEstateMetadata {
   purchasePrice: number
@@ -323,7 +336,101 @@ export interface BalanceSnapshot {
   date: string
   balance: number
   investedAmount?: number
+  /** Observed snapshots are recorded by a sync/scheduler; reconstructed ones are backfilled. */
+  origin?: "OBSERVED" | "RECONSTRUCTED" | "ESTIMATED"
   createdAt?: string
+}
+
+export interface AnalyticsPerformancePoint {
+  date: string
+  total: number
+  invested: number
+  twrPercent: number
+  benchmarkPercent: number | null
+  estimated: boolean
+}
+
+export interface AnalyticsPerformance {
+  points: AnalyticsPerformancePoint[]
+  monthlyReturns: Record<string, number>
+  annualizedReturn: number | null
+  benchmarkTicker: string
+  warnings: string[]
+}
+
+export interface FireSettings {
+  annualExpenses: number
+  monthlySavings: number
+  safeWithdrawalRate: number
+  currentAge: number | null
+  retirementAge: number | null
+  returnMode: "OBSERVED_TWR" | "MANUAL"
+  manualReturnRate: number | null
+}
+
+export interface FireProjection {
+  settings: FireSettings
+  fireNumber: number
+  currentValue: number
+  progressPercent: number
+  annualReturnRate: number | null
+  estimatedFireDate: string | null
+  annualPassiveIncome: number
+  observedReturnAvailable: boolean
+}
+
+export interface PortfolioLot {
+  accountId: number
+  accountName: string
+  ticker: string
+  name: string | null
+  purchaseDate: string | null
+  originalQuantity: number
+  remainingQuantity: number
+  costPerUnit: number
+  costBasis: number
+  currentPrice: number | null
+  currentValue: number | null
+  pnl: number | null
+  pnlPercent: number | null
+  detailed: boolean
+}
+
+export interface RebalanceLine {
+  accountId: number
+  ticker: string
+  name: string | null
+  currentValue: number | null
+  currentPercent: number | null
+  targetPercent: number
+  differenceEur: number | null
+  quantityToTrade: number | null
+  action: "BUY" | "SELL" | "HOLD" | "UNAVAILABLE"
+  warning: string | null
+}
+
+export interface Rebalance {
+  lines: RebalanceLine[]
+  totalValue: number
+  warnings: string[]
+}
+
+export interface BackfillAccount {
+  accountId: number
+  accountName: string
+  suggestedStartDate: string | null
+  source: "FIRST_TRANSACTION" | "USER_INPUT_REQUIRED"
+  needsStartDate: boolean
+  /** Current holdings with no matching transaction: their actual start date must be supplied. */
+  unknownTickers: string[]
+}
+
+export interface BackfillPlan {
+  accounts: BackfillAccount[]
+}
+export interface BackfillResult {
+  snapshotsCreated: number
+  warnings: string[]
 }
 
 export interface GoalProgress {
@@ -362,7 +469,12 @@ export interface GoalMonthEntry {
 export interface DashboardData {
   totalNetWorth: number
   totalLiabilities: number
-  netWorthHistory: { date: string; total: number; invested: number; pnl: number }[]
+  netWorthHistory: {
+    date: string
+    total: number
+    invested: number
+    pnl: number
+  }[]
   distribution: {
     accountId: number
     name: string
@@ -415,7 +527,7 @@ export interface HoldingResponse {
 }
 
 // --- Security insight (asset type + ETF composition) ---
-export type AssetType = 'ETF' | 'STOCK' | 'CRYPTO' | 'UNKNOWN'
+export type AssetType = "ETF" | "STOCK" | "CRYPTO" | "UNKNOWN"
 
 export interface WeightedSlice {
   label: string
@@ -450,16 +562,19 @@ export interface SecurityInsight {
  * supported yet."
  */
 export const SUPPORTED_EXCHANGES = [
-  { type: 'BINANCE', requiresApiSecret: true },
-  { type: 'KRAKEN', requiresApiSecret: true },
-  { type: 'MERIA', requiresApiSecret: false },
+  { type: "BINANCE", requiresApiSecret: true },
+  { type: "KRAKEN", requiresApiSecret: true },
+  { type: "MERIA", requiresApiSecret: false },
 ] as const
 
-export type ExchangeType = (typeof SUPPORTED_EXCHANGES)[number]['type']
+export type ExchangeType = (typeof SUPPORTED_EXCHANGES)[number]["type"]
 
 /** Whether the exchange needs an API secret on top of its API key. */
 export function exchangeRequiresApiSecret(type: ExchangeType): boolean {
-  return SUPPORTED_EXCHANGES.find(exchange => exchange.type === type)?.requiresApiSecret ?? true
+  return (
+    SUPPORTED_EXCHANGES.find((exchange) => exchange.type === type)
+      ?.requiresApiSecret ?? true
+  )
 }
 /**
  * On-chain wallet chains, in the order the pickers show them.
@@ -469,14 +584,14 @@ export function exchangeRequiresApiSecret(type: ExchangeType): boolean {
  * forget the adapter (`WalletSyncService.verifyAdapterCoverage`); on this side a missing entry
  * shows up as a chain that never appears in the picker.
  */
-export const SUPPORTED_CHAINS = ['BITCOIN', 'EVM', 'SOLANA'] as const
+export const SUPPORTED_CHAINS = ["BITCOIN", "EVM", "SOLANA"] as const
 
 export type ChainType = (typeof SUPPORTED_CHAINS)[number]
-export type FinaryMappingAction = 'SKIP' | 'MAP_EXISTING' | 'CREATE_NEW'
+export type FinaryMappingAction = "SKIP" | "MAP_EXISTING" | "CREATE_NEW"
 
 /** One line of a crypto exchange account's per-product breakdown. */
 export interface ExchangePositionResponse {
-  product: 'SPOT' | 'STAKING' | 'LENDING'
+  product: "SPOT" | "STAKING" | "LENDING"
   ticker: string
   quantity: number
   /** Capital part of `quantity`; null when the exchange doesn't split it. */
@@ -541,11 +656,11 @@ interface BoursoSessionStatusBase {
 
 export type BoursoSessionStatus =
   | (BoursoSessionStatusBase & {
-      syncStatus: 'FAILED'
+      syncStatus: "FAILED"
       lastSyncError: BoursoErrorCode
     })
   | (BoursoSessionStatusBase & {
-      syncStatus: 'IDLE' | 'QUEUED' | 'RUNNING' | 'SUCCESS'
+      syncStatus: "IDLE" | "QUEUED" | "RUNNING" | "SUCCESS"
       lastSyncError: null
     })
 
@@ -557,26 +672,26 @@ export type BoursoSessionStatus =
  * the holder must tick the notice on the bank's website and retry.
  */
 export type BoursoErrorCode =
-  | 'INVALID_CREDENTIALS'
-  | 'FRAUD_ACK_REQUIRED'
-  | 'MFA_TYPE_UNSUPPORTED'
-  | 'APP_VALIDATION_TIMEOUT'
-  | 'AUTH_ATTEMPT_EXPIRED'
-  | 'SESSION_EXPIRED'
-  | 'PORTFOLIO_INCOMPLETE'
-  | 'UPSTREAM_FORMAT_CHANGED'
-  | 'UPSTREAM_UNAVAILABLE'
-  | 'INVALID_DATA'
-  | 'INTERNAL_ERROR'
+  | "INVALID_CREDENTIALS"
+  | "FRAUD_ACK_REQUIRED"
+  | "MFA_TYPE_UNSUPPORTED"
+  | "APP_VALIDATION_TIMEOUT"
+  | "AUTH_ATTEMPT_EXPIRED"
+  | "SESSION_EXPIRED"
+  | "PORTFOLIO_INCOMPLETE"
+  | "UPSTREAM_FORMAT_CHANGED"
+  | "UPSTREAM_UNAVAILABLE"
+  | "INVALID_DATA"
+  | "INTERNAL_ERROR"
 
 /** `mfaType` is always `APP_PUSH` when a second factor is required. */
 export interface BoursoAuthInitResponse {
   processId: string | null
   mfaRequired: boolean
-  mfaType: 'APP_PUSH' | null
+  mfaType: "APP_PUSH" | null
 }
 
-export type DegiroSessionStatusValue = 'ACTIVE' | 'REAUTH_REQUIRED' | 'FAILED'
+export type DegiroSessionStatusValue = "ACTIVE" | "REAUTH_REQUIRED" | "FAILED"
 
 export interface DegiroSessionStatus {
   isActive: boolean
@@ -604,24 +719,24 @@ interface BourseDirectSessionStatusBase {
 
 export type BourseDirectSessionStatus =
   | (BourseDirectSessionStatusBase & {
-      syncStatus: 'FAILED'
+      syncStatus: "FAILED"
       lastSyncError: BourseDirectErrorCode
     })
   | (BourseDirectSessionStatusBase & {
-      syncStatus: 'IDLE' | 'QUEUED' | 'RUNNING' | 'SUCCESS'
+      syncStatus: "IDLE" | "QUEUED" | "RUNNING" | "SUCCESS"
       lastSyncError: null
     })
 
 export type BourseDirectErrorCode =
-  | 'INVALID_CREDENTIALS'
-  | 'INVALID_OTP'
-  | 'AUTH_ATTEMPT_EXPIRED'
-  | 'SESSION_EXPIRED'
-  | 'PORTFOLIO_INCOMPLETE'
-  | 'UPSTREAM_FORMAT_CHANGED'
-  | 'UPSTREAM_UNAVAILABLE'
-  | 'INVALID_DATA'
-  | 'INTERNAL_ERROR'
+  | "INVALID_CREDENTIALS"
+  | "INVALID_OTP"
+  | "AUTH_ATTEMPT_EXPIRED"
+  | "SESSION_EXPIRED"
+  | "PORTFOLIO_INCOMPLETE"
+  | "UPSTREAM_FORMAT_CHANGED"
+  | "UPSTREAM_UNAVAILABLE"
+  | "INVALID_DATA"
+  | "INTERNAL_ERROR"
 
 export interface BourseDirectAuthInitResponse {
   processId: string | null
@@ -637,32 +752,32 @@ interface AmundiSessionStatusBase {
 
 export type AmundiSessionStatus =
   | (AmundiSessionStatusBase & {
-      syncStatus: 'FAILED'
+      syncStatus: "FAILED"
       lastSyncError: AmundiErrorCode
     })
   | (AmundiSessionStatusBase & {
-      syncStatus: 'IDLE' | 'QUEUED' | 'RUNNING' | 'SUCCESS'
+      syncStatus: "IDLE" | "QUEUED" | "RUNNING" | "SUCCESS"
       lastSyncError: null
     })
 
 export type AmundiErrorCode =
-  | 'INVALID_CREDENTIALS'
-  | 'CAPTCHA_BLOCKED'
-  | 'INVALID_OTP'
-  | 'APP_VALIDATION_TIMEOUT'
-  | 'AUTH_ATTEMPT_EXPIRED'
-  | 'SESSION_EXPIRED'
-  | 'PORTFOLIO_INCOMPLETE'
-  | 'UPSTREAM_FORMAT_CHANGED'
-  | 'UPSTREAM_UNAVAILABLE'
-  | 'INVALID_DATA'
-  | 'INTERNAL_ERROR'
+  | "INVALID_CREDENTIALS"
+  | "CAPTCHA_BLOCKED"
+  | "INVALID_OTP"
+  | "APP_VALIDATION_TIMEOUT"
+  | "AUTH_ATTEMPT_EXPIRED"
+  | "SESSION_EXPIRED"
+  | "PORTFOLIO_INCOMPLETE"
+  | "UPSTREAM_FORMAT_CHANGED"
+  | "UPSTREAM_UNAVAILABLE"
+  | "INVALID_DATA"
+  | "INTERNAL_ERROR"
 
 /** `mfaType` is `APP_PUSH` when the user must approve in the Mon Épargne app, `SMS` otherwise. */
 export interface AmundiAuthInitResponse {
   processId: string | null
   mfaRequired: boolean
-  mfaType: 'APP_PUSH' | 'SMS' | null
+  mfaType: "APP_PUSH" | "SMS" | null
 }
 
 export interface FinaryAccountPreview {
@@ -733,7 +848,7 @@ export interface FinaryImportResultResponse {
 }
 
 export interface FinaryAutoSyncResponse {
-  status: 'OK' | 'NEEDS_MAPPING' | 'TOTP_REQUIRED' | 'NOT_CONNECTED'
+  status: "OK" | "NEEDS_MAPPING" | "TOTP_REQUIRED" | "NOT_CONNECTED"
   accountsSynced: number
   newAccountCount: number
 }
@@ -747,7 +862,7 @@ export interface Transaction {
   category: string | null
   nativeCurrency: string
   isManual: boolean
-  txType: 'DEPOSIT' | 'WITHDRAWAL' | 'BUY' | 'SELL' | 'DIVIDEND' | 'FEE' | null
+  txType: "DEPOSIT" | "WITHDRAWAL" | "BUY" | "SELL" | "DIVIDEND" | "FEE" | null
   ticker: string | null
   name: string | null
   quantity: number | null
@@ -756,23 +871,23 @@ export interface Transaction {
 }
 
 export interface TransactionRequest {
-  date: string          // ISO date "YYYY-MM-DD"
+  date: string // ISO date "YYYY-MM-DD"
   description: string
-  amount: number        // signed: positive=deposit, negative=withdrawal
-  txType: 'DEPOSIT' | 'WITHDRAWAL' | 'BUY' | 'SELL' | 'DIVIDEND' | 'FEE' | null
+  amount: number // signed: positive=deposit, negative=withdrawal
+  txType: "DEPOSIT" | "WITHDRAWAL" | "BUY" | "SELL" | "DIVIDEND" | "FEE" | null
   ticker?: string
   name?: string
   quantity?: number
   pricePerUnit?: number
   currency?: string
-  fees?: number         // per-trade fees, folded into the PMP cost basis
+  fees?: number // per-trade fees, folded into the PMP cost basis
 }
 
 // --- CSV transaction import (two-phase wizard) ---
 
 export interface CsvDialectDto {
   delimiter: string
-  decimal: 'DOT' | 'COMMA'
+  decimal: "DOT" | "COMMA"
   dateFormat: string
 }
 

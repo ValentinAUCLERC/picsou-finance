@@ -1,8 +1,8 @@
-import { createBrowserRouter } from 'react-router-dom'
-import { RequireAuth, PublicOnly, RequireAdmin } from '@/features/auth/guards'
-import { RequireSetup, SetupOnly } from '@/features/setup/guards'
-import { AppLayout } from '@/components/layout/AppLayout'
-import '@/pages/setup/setup.css'
+import { createBrowserRouter } from "react-router-dom"
+import { RequireAuth, PublicOnly, RequireAdmin } from "@/features/auth/guards"
+import { RequireSetup, SetupOnly } from "@/features/setup/guards"
+import { AppLayout } from "@/components/layout/AppLayout"
+import "@/pages/setup/setup.css"
 import {
   LoginPage,
   MfaChallengePage,
@@ -10,6 +10,7 @@ import {
   AccountsPage,
   AccountDetailPage,
   GoalsPage,
+  AnalyticsPage,
   GoalCalendarPage,
   SyncPage,
   SettingsPage,
@@ -33,11 +34,11 @@ import {
   ForbiddenPage,
   ServerErrorPage,
   SuspensePage,
-} from './lazy-pages'
+} from "./lazy-pages"
 
 export const router = createBrowserRouter([
   {
-    path: '/login',
+    path: "/login",
     element: (
       <PublicOnly>
         <SuspensePage>
@@ -51,7 +52,7 @@ export const router = createBrowserRouter([
     // (mfa_challenge cookie set, access_token NOT yet set), so PublicOnly applies.
     // No session to restore yet, so skip the probe (a /auth/refresh here would
     // 401 and just flash a skeleton over the challenge form).
-    path: '/login/mfa',
+    path: "/login/mfa",
     element: (
       <PublicOnly probe={false}>
         <SuspensePage>
@@ -61,7 +62,7 @@ export const router = createBrowserRouter([
     ),
   },
   {
-    path: '/error/403',
+    path: "/error/403",
     element: (
       <SuspensePage>
         <ForbiddenPage />
@@ -69,7 +70,7 @@ export const router = createBrowserRouter([
     ),
   },
   {
-    path: '/error/500',
+    path: "/error/500",
     element: (
       <SuspensePage>
         <ServerErrorPage />
@@ -77,7 +78,7 @@ export const router = createBrowserRouter([
     ),
   },
   {
-    path: '/setup',
+    path: "/setup",
     element: (
       <SetupOnly>
         <SuspensePage fallback={null}>
@@ -86,21 +87,98 @@ export const router = createBrowserRouter([
       </SetupOnly>
     ),
     children: [
-      { index: true, element: <SuspensePage fallback={null}><SetupStepIntro /></SuspensePage> },
-      { path: 'admin', element: <SuspensePage fallback={null}><SetupStepAdmin /></SuspensePage> },
-      { path: 'security', element: <SuspensePage fallback={null}><SetupStepSecurity /></SuspensePage> },
-      { path: 'integrations', element: <SuspensePage fallback={null}><SetupStepIntegrations /></SuspensePage> },
-      { path: 'integrations/enablebanking', element: <SuspensePage fallback={null}><SetupStepEnableBanking /></SuspensePage> },
-      { path: 'integrations/boursobank', element: <SuspensePage fallback={null}><SetupStepBoursoBank /></SuspensePage> },
-      { path: 'integrations/boursedirect', element: <SuspensePage fallback={null}><SetupStepBourseDirect /></SuspensePage> },
-      { path: 'integrations/traderepublic', element: <SuspensePage fallback={null}><SetupStepTradeRepublic /></SuspensePage> },
-      { path: 'integrations/finary', element: <SuspensePage fallback={null}><SetupStepFinary /></SuspensePage> },
-      { path: 'integrations/crypto', element: <SuspensePage fallback={null}><SetupStepCrypto /></SuspensePage> },
-      { path: 'done', element: <SuspensePage fallback={null}><SetupStepComplete /></SuspensePage> },
+      {
+        index: true,
+        element: (
+          <SuspensePage fallback={null}>
+            <SetupStepIntro />
+          </SuspensePage>
+        ),
+      },
+      {
+        path: "admin",
+        element: (
+          <SuspensePage fallback={null}>
+            <SetupStepAdmin />
+          </SuspensePage>
+        ),
+      },
+      {
+        path: "security",
+        element: (
+          <SuspensePage fallback={null}>
+            <SetupStepSecurity />
+          </SuspensePage>
+        ),
+      },
+      {
+        path: "integrations",
+        element: (
+          <SuspensePage fallback={null}>
+            <SetupStepIntegrations />
+          </SuspensePage>
+        ),
+      },
+      {
+        path: "integrations/enablebanking",
+        element: (
+          <SuspensePage fallback={null}>
+            <SetupStepEnableBanking />
+          </SuspensePage>
+        ),
+      },
+      {
+        path: "integrations/boursobank",
+        element: (
+          <SuspensePage fallback={null}>
+            <SetupStepBoursoBank />
+          </SuspensePage>
+        ),
+      },
+      {
+        path: "integrations/boursedirect",
+        element: (
+          <SuspensePage fallback={null}>
+            <SetupStepBourseDirect />
+          </SuspensePage>
+        ),
+      },
+      {
+        path: "integrations/traderepublic",
+        element: (
+          <SuspensePage fallback={null}>
+            <SetupStepTradeRepublic />
+          </SuspensePage>
+        ),
+      },
+      {
+        path: "integrations/finary",
+        element: (
+          <SuspensePage fallback={null}>
+            <SetupStepFinary />
+          </SuspensePage>
+        ),
+      },
+      {
+        path: "integrations/crypto",
+        element: (
+          <SuspensePage fallback={null}>
+            <SetupStepCrypto />
+          </SuspensePage>
+        ),
+      },
+      {
+        path: "done",
+        element: (
+          <SuspensePage fallback={null}>
+            <SetupStepComplete />
+          </SuspensePage>
+        ),
+      },
     ],
   },
   {
-    path: '/',
+    path: "/",
     element: (
       <RequireSetup>
         <RequireAuth>
@@ -109,21 +187,108 @@ export const router = createBrowserRouter([
       </RequireSetup>
     ),
     children: [
-      { index: true, element: <SuspensePage><DashboardPage /></SuspensePage> },
-      { path: 'accounts', element: <SuspensePage><AccountsPage /></SuspensePage> },
-      { path: 'accounts/:id', element: <SuspensePage><AccountDetailPage /></SuspensePage> },
-      { path: 'goals', element: <SuspensePage><GoalsPage /></SuspensePage> },
-      { path: 'goals/:id/calendar', element: <SuspensePage><GoalCalendarPage /></SuspensePage> },
-      { path: 'sync', element: <SuspensePage><SyncPage /></SuspensePage> },
-      { path: 'sync/callback', element: <SuspensePage><SyncPage /></SuspensePage> },
-      { path: 'settings', element: <SuspensePage><SettingsPage /></SuspensePage> },
-      { path: 'family', element: <SuspensePage><FamilyDashboardPage /></SuspensePage> },
-      { path: 'settings/family', element: <SuspensePage><FamilySettingsPage /></SuspensePage> },
-      { path: 'admin', element: <SuspensePage><RequireAdmin><AdminPage /></RequireAdmin></SuspensePage> },
+      {
+        index: true,
+        element: (
+          <SuspensePage>
+            <DashboardPage />
+          </SuspensePage>
+        ),
+      },
+      {
+        path: "accounts",
+        element: (
+          <SuspensePage>
+            <AccountsPage />
+          </SuspensePage>
+        ),
+      },
+      {
+        path: "accounts/:id",
+        element: (
+          <SuspensePage>
+            <AccountDetailPage />
+          </SuspensePage>
+        ),
+      },
+      {
+        path: "goals",
+        element: (
+          <SuspensePage>
+            <GoalsPage />
+          </SuspensePage>
+        ),
+      },
+      {
+        path: "analytics",
+        element: (
+          <SuspensePage>
+            <AnalyticsPage />
+          </SuspensePage>
+        ),
+      },
+      {
+        path: "goals/:id/calendar",
+        element: (
+          <SuspensePage>
+            <GoalCalendarPage />
+          </SuspensePage>
+        ),
+      },
+      {
+        path: "sync",
+        element: (
+          <SuspensePage>
+            <SyncPage />
+          </SuspensePage>
+        ),
+      },
+      {
+        path: "sync/callback",
+        element: (
+          <SuspensePage>
+            <SyncPage />
+          </SuspensePage>
+        ),
+      },
+      {
+        path: "settings",
+        element: (
+          <SuspensePage>
+            <SettingsPage />
+          </SuspensePage>
+        ),
+      },
+      {
+        path: "family",
+        element: (
+          <SuspensePage>
+            <FamilyDashboardPage />
+          </SuspensePage>
+        ),
+      },
+      {
+        path: "settings/family",
+        element: (
+          <SuspensePage>
+            <FamilySettingsPage />
+          </SuspensePage>
+        ),
+      },
+      {
+        path: "admin",
+        element: (
+          <SuspensePage>
+            <RequireAdmin>
+              <AdminPage />
+            </RequireAdmin>
+          </SuspensePage>
+        ),
+      },
     ],
   },
   {
-    path: '/activate/:token',
+    path: "/activate/:token",
     element: (
       <SuspensePage>
         <ActivationPage />
@@ -131,7 +296,7 @@ export const router = createBrowserRouter([
     ),
   },
   {
-    path: '*',
+    path: "*",
     element: (
       <SuspensePage>
         <NotFoundPage />

@@ -37,6 +37,8 @@
     "accounts.desc": "Balances & transactions",
     "goals": "Goals",
     "goals.desc": "Track your savings",
+    "analytics": "Analytics",
+    "analytics.desc": "Performance & allocation",
     "sync": "Sync",
     "settings": "Settings",
     "settings.desc": "Preferences & account",

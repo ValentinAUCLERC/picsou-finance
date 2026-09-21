@@ -47,6 +47,8 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
 
     List<Transaction> findByAccountIdAndTxTypeInOrderByDateAscIdAsc(Long accountId, List<TransactionType> types);
 
+    List<Transaction> findByAccountIdOrderByDateAscIdAsc(Long accountId);
+
     /** Earliest transaction date across all accounts */
     @Query("SELECT MIN(t.date) FROM Transaction t")
     LocalDate findEarliestDate();

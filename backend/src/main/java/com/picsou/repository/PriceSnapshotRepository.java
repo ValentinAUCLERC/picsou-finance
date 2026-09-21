@@ -58,6 +58,8 @@ public interface PriceSnapshotRepository extends JpaRepository<PriceSnapshot, Lo
         @Param("to") LocalDate to
     );
 
+    List<PriceSnapshot> findByTickerAndDateBetweenOrderByDateAsc(String ticker, LocalDate from, LocalDate to);
+
     @Modifying
     @Query("""
         DELETE FROM PriceSnapshot ps

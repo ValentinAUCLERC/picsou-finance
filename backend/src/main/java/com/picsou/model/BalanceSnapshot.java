@@ -38,6 +38,11 @@ public class BalanceSnapshot {
     @Builder.Default
     private BigDecimal investedAmount = BigDecimal.ZERO;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    @Builder.Default
+    private SnapshotOrigin origin = SnapshotOrigin.OBSERVED;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     @Builder.Default
     private java.time.Instant createdAt = java.time.Instant.now();

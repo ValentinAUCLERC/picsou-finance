@@ -80,6 +80,7 @@
 | Encryption at rest | 2026-04-08 | [encryption-at-rest.md](./features/encryption-at-rest.md) |
 | Crypto tracking | 2026-08-11 | [crypto-tracking.md](./features/crypto-tracking.md) |
 | Savings goals | 2026-06-02 | [goals.md](./features/goals.md) |
+| Portfolio analytics (TWR, FIRE, lots, rebalancing, backfill) | 2026-09-21 | [portfolio-analytics.md](./features/portfolio-analytics.md) |
 | Goals — Grid view (donuts) | 2026-06-02 | [goal-calendar-donut.md](./features/goal-calendar-donut.md) |
 | Price service | 2026-08-07 | [price-service.md](./features/price-service.md) |
 | Live prices (holdings) | 2026-05-19 | [live-prices-holdings.md](./features/live-prices-holdings.md) |
