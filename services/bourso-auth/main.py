@@ -33,11 +33,9 @@ import re
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
-from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urljoin
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -689,11 +687,8 @@ _ROW_RE = re.compile(r"<tr\b(?P<attrs>[^>]*)>(?P<row>.*?)</tr>", re.IGNORECASE |
 _CELL_RE = re.compile(r"<t[dh]\b[^>]*>(?P<cell>.*?)</t[dh]>", re.IGNORECASE | re.DOTALL)
 _TAG_RE = re.compile(r"<[^>]+>")
 _DETAIL_ID_RE = re.compile(r"data-modal-alert-behavior=[\"'][^\"']*?(?P<id>\d+)", re.IGNORECASE)
-_CONTINUATION_TOKEN_RE = re.compile(
-    r"data-operations-next-pagination=[\"'](?P<token>[^\"']+)", re.IGNORECASE
-)
-_NEXT_HISTORY_PAGE_RE = re.compile(
-    r"<li\b[^>]*\bpagination__next\b[^>]*>.*?<a\b[^>]*\bhref=[\"'](?P<href>[^\"']+)",
+_ACCOUNT_OPENING_DATE_RE = re.compile(
+    r"Date d(?:['’]|&#039;)ouverture(?: fiscale)? du compte.*?(?P<date>\d{2}/\d{2}/\d{4})",
     re.IGNORECASE | re.DOTALL,
 )
 _ISIN_IN_TEXT_RE = re.compile(r"\b([A-Z]{2}[A-Z0-9]{9}\d)\b")
@@ -711,6 +706,24 @@ def _date_value(raw: str) -> str | None:
         except ValueError:
             pass
     return None
+
+
+def _trading_periods(page: str) -> list[str]:
+    """Return every monthly filter value from the account's opening month."""
+    opening_match = _ACCOUNT_OPENING_DATE_RE.search(page)
+    opening = _date_value(opening_match.group("date")) if opening_match else None
+    if opening is None:
+        # Keep the connector bounded when BoursoBank removes the opening-date
+        # card. The visible form still supplies the latest selectable months.
+        return re.findall(r'<option\s+value=["\'](?P<period>\d{1,2}-\d{4})', page)
+
+    first = datetime.strptime(opening, "%Y-%m-%d").date().replace(day=1)
+    current = datetime.now().date().replace(day=1)
+    periods: list[str] = []
+    while current >= first:
+        periods.append(f"{current.month}-{current.year}")
+        current = current.replace(year=current.year - 1, month=12) if current.month == 1 else current.replace(month=current.month - 1)
+    return periods
 
 
 def _history_rows(page: str) -> list[tuple[str, str, str]]:
@@ -788,23 +801,13 @@ async def _collect_trades(client: httpx.AsyncClient) -> list[TradePayload]:
     accounts, _ = parse_dashboard(dashboard.text)
     trades: list[TradePayload] = []
     for account in accounts:
-        if account["section"] != "trading":
+        if account["section"] != "trading" or account["route"] not in {"ord", "pea", "pea-pme"}:
             continue
         base_path = f"/compte/{account['route']}/{account['id']}"
         # PEA and PEA-PME share BoursoBank's `ord` URL namespace. The
         # accountType query string is what switches the movements component
         # to the PEA view.
-        # The title-history view has a deliberately narrow default period.
-        # Request the whole available range, then preserve BoursoBank's own
-        # pagination so a line starts at its actual acquisition date.
-        movement_params = {
-            "rumroute": "accounts.bank.movements",
-            "_hinclude": "1",
-            "movementSearch[fromDate]": "01/01/2000",
-            "movementSearch[toDate]": (datetime.now().date() + timedelta(days=40)).strftime("%d/%m/%Y"),
-        }
-        if account["type"] == "PEA":
-            movement_params["accountType"] = "pea"
+        movement_params = {"showza": "0"}
         # The public URL is an application shell. Bourso's own movements
         # component asks the server for this hinclude fragment, which contains
         # the list rows and their detail-operation links.
@@ -819,45 +822,30 @@ async def _collect_trades(client: httpx.AsyncClient) -> list[TradePayload]:
         if response.status_code != 200:
             log.info("BoursoBank movements unavailable for account %s… (HTTP %s)", account["id"][:8], response.status_code)
             continue
-        # The initial HTML is only the movement component shell. Its pagination
-        # token is immediately consumed by BoursoBank's own JavaScript to load
-        # the first page of operations; reproduce that request here.
-        continuation = _CONTINUATION_TOKEN_RE.search(response.text)
-        if continuation:
-            fragment = await client.get(
+        form_token = _form_token(response.text)
+        pages = []
+        # BoursoBank's trading history is a form with one selectable calendar
+        # month, not the usual account-movement paginator. Query every month
+        # individually so lots are backfilled only from their real activity.
+        for period in _trading_periods(response.text):
+            monthly = await client.get(
                 base_path + "/mouvements",
-                params={**movement_params, "continuationToken": html_module.unescape(continuation.group("token"))},
+                params={
+                    **movement_params,
+                    "form[period]": period,
+                    "form[type]": "TIT",
+                    "form[_token]": form_token,
+                    "form[submit]": "",
+                },
                 headers={"X-Requested-With": "XMLHttpRequest"},
                 follow_redirects=True,
             )
-            if fragment.status_code in (401, 403):
+            if monthly.status_code in (401, 403):
                 raise HTTPException(status_code=401, detail="SESSION_EXPIRED")
-            if fragment.status_code == 200:
-                response = fragment
-        pages = [response.text]
-        # The legacy investment pages use a regular next-page link rather
-        # than the continuation token used by banking-account movements.
-        next_page = _NEXT_HISTORY_PAGE_RE.search(response.text)
-        while next_page and len(pages) < 250:
-            paged = await client.get(
-                urljoin(BASE_URL, html_module.unescape(next_page.group("href"))),
-                headers={"X-Requested-With": "XMLHttpRequest"},
-                follow_redirects=True,
-            )
-            if paged.status_code in (401, 403):
-                raise HTTPException(status_code=401, detail="SESSION_EXPIRED")
-            if paged.status_code != 200 or paged.text in pages:
-                break
-            pages.append(paged.text)
-            next_page = _NEXT_HISTORY_PAGE_RE.search(paged.text)
+            if monthly.status_code == 200:
+                pages.append(monthly.text)
         history = [row for page in pages for row in _history_rows(page)]
         if not history:
-            # Temporary field capture while adapting to BoursoBank's new
-            # client-side movements component. This file remains inside the
-            # ephemeral sidecar container and is never returned by the API.
-            Path(f"/tmp/bourso-movements-{account['id']}.html").write_text(
-                response.text, encoding="utf-8"
-            )
             headers = []
             for table_match in _TABLE_RE.finditer(response.text):
                 first = _ROW_RE.search(table_match.group("table"))
@@ -867,22 +855,6 @@ async def _collect_trades(client: httpx.AsyncClient) -> list[TradePayload]:
                 "BoursoBank movements page has no recognised detail rows (account=%s…; tables=%s; modalLinks=%d)",
                 account["id"][:8], headers[:4], len(_DETAIL_ID_RE.findall(response.text)),
             )
-            scripts = re.findall(r"<script\b[^>]*\bsrc=[\"']([^\"']+)", response.text, re.IGNORECASE)
-            api_paths = re.findall(r"(?:https?://[^\"'\s<>]+|/[^\"'\s<>]*(?:api|mouvement|transaction)[^\"'\s<>]*)", response.text, re.IGNORECASE)
-            log.info(
-                "BoursoBank movements shell diagnostic (account=%s…; scriptSrc=%s; apiPaths=%s)",
-                account["id"][:8], scripts[:30], api_paths[:30],
-            )
-            log.info("BoursoBank movements raw fragment (account=%s…): %s", account["id"][:8], response.text[:20000])
-            dated_windows = []
-            for match in re.finditer(r"\b\d{2}[/-]\d{2}[/-]\d{4}\b", response.text):
-                window = response.text[max(0, match.start() - 800):match.start() + 3200]
-                if window not in dated_windows:
-                    dated_windows.append(window)
-                if len(dated_windows) == 2:
-                    break
-            if dated_windows:
-                log.info("BoursoBank movements date windows (account=%s…): %s", account["id"][:8], dated_windows)
         for date, operation, detail_id in history:
             detail = await client.get(f"{base_path}/mouvement/{detail_id}", follow_redirects=True)
             if detail.status_code in (401, 403):
