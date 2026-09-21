@@ -35,6 +35,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urljoin
 
@@ -851,6 +852,12 @@ async def _collect_trades(client: httpx.AsyncClient) -> list[TradePayload]:
             next_page = _NEXT_HISTORY_PAGE_RE.search(paged.text)
         history = [row for page in pages for row in _history_rows(page)]
         if not history:
+            # Temporary field capture while adapting to BoursoBank's new
+            # client-side movements component. This file remains inside the
+            # ephemeral sidecar container and is never returned by the API.
+            Path(f"/tmp/bourso-movements-{account['id']}.html").write_text(
+                response.text, encoding="utf-8"
+            )
             headers = []
             for table_match in _TABLE_RE.finditer(response.text):
                 first = _ROW_RE.search(table_match.group("table"))
