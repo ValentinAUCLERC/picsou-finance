@@ -812,6 +812,7 @@ async def _collect_trades(client: httpx.AsyncClient) -> list[TradePayload]:
                 "BoursoBank movements shell diagnostic (account=%s…; scriptSrc=%s; apiPaths=%s)",
                 account["id"][:8], scripts[:30], api_paths[:30],
             )
+            log.info("BoursoBank movements raw fragment (account=%s…): %s", account["id"][:8], response.text[:20000])
         for date, operation, detail_id in history:
             detail = await client.get(f"{base_path}/mouvement/{detail_id}", follow_redirects=True)
             if detail.status_code in (401, 403):
