@@ -633,6 +633,11 @@ async def _fetch_trading_account(
                 follow_redirects=True,
             )
             if account_page.status_code == 200:
+                # Retained only for the requested connector audit: this lets
+                # us inspect the dynamically loaded positions endpoint without
+                # putting a raw account page in application logs.
+                with open(f"/tmp/bourso-positions-{account_id}.html", "w", encoding="utf-8") as audit_capture:
+                    audit_capture.write(account_page.text)
                 log.info(
                     "BoursoBank positions page structure (account=%s…; tables=%s; positionLinks=%s)",
                     account_id[:8],
