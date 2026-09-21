@@ -18,6 +18,7 @@ from main import (
     BASE_URL,
     AccountsRequest,
     _collect_accounts,
+    _direct_table_trades,
     _personal_identity_path,
     _json_success,
     _strong_auth_params,
@@ -118,6 +119,28 @@ class ExtractorTest(unittest.TestCase):
         self.assertEqual(
             extract_form_token('<input value="abc.def" name="form[_token]">'), "abc.def"
         )
+
+    def test_reads_buy_and_sale_lines_from_the_monthly_securities_table(self):
+        page = """
+        <table><thead><tr>
+          <th>Date opération</th><th>Date Valeur</th><th>Opération</th><th>Valeur</th>
+          <th>Code ISIN</th><th>Montant</th><th>Quantité</th><th>Cours</th>
+        </tr></thead><tbody>
+          <tr><td>3 juin 2026</td><td>4 juin 2026</td><td>ACHAT COMPTANT</td><td>4 juin 2026</td><td>NVIDIA</td>
+              <td>US67066G1040</td><td>-1 200,00 €</td><td>10</td><td>120,00 €</td></tr>
+          <tr><td>8 juil. 2026</td><td>10 juil. 2026</td><td>VENTE</td><td>10 juil. 2026</td><td>NVIDIA</td>
+              <td>US67066G1040</td><td>1 300,00 €</td><td>10</td><td>130,00 €</td></tr>
+          <tr><td>1 août 2026</td><td>3 août 2026</td><td>COUPONS</td><td>3 août 2026</td><td>NVIDIA</td>
+              <td>US67066G1040</td><td>1,18 €</td><td>10</td><td></td></tr>
+        </tbody></table>
+        """
+        trades = _direct_table_trades(page, "bourso_account", "7-2026")
+        self.assertEqual([(trade.date, trade.side, trade.isin) for trade in trades], [
+            ("2026-06-03", "BUY", "US67066G1040"),
+            ("2026-07-08", "SELL", "US67066G1040"),
+        ])
+        self.assertEqual(trades[0].quantity, Decimal("10"))
+        self.assertEqual(trades[0].priceEur, Decimal("120"))
 
     def test_a_login_page_without_a_token_is_refused(self):
         with self.assertRaises(AccountsFormatError) as raised:

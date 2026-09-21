@@ -35,6 +35,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 from decimal import Decimal
+from html.parser import HTMLParser
 from typing import Any, Literal
 
 import httpx
@@ -705,6 +706,15 @@ def _date_value(raw: str) -> str | None:
             return datetime.strptime(raw, pattern).date().isoformat()
         except ValueError:
             pass
+    french_months = {
+        "janvier": 1, "janv": 1, "février": 2, "fevrier": 2, "févr": 2, "fevr": 2,
+        "mars": 3, "avril": 4, "mai": 5, "juin": 6, "juillet": 7, "juil": 7,
+        "août": 8, "aout": 8, "septembre": 9, "sept": 9, "octobre": 10, "oct": 10,
+        "novembre": 11, "nov": 11, "décembre": 12, "decembre": 12, "déc": 12, "dec": 12,
+    }
+    match = re.fullmatch(r"(?P<day>\d{1,2})\s+(?P<month>[a-zéû]+)\.?\s+(?P<year>\d{4})", raw.lower())
+    if match and (month := french_months.get(match.group("month"))):
+        return datetime(int(match.group("year")), month, int(match.group("day"))).date().isoformat()
     return None
 
 
@@ -768,6 +778,90 @@ def _movement_table_signature(page: str) -> list[dict[str, Any]]:
             "detailLinks": len(_DETAIL_ID_RE.findall(table_match.group("table"))),
         })
     return signatures
+
+
+class _MovementTableParser(HTMLParser):
+    """Extract direct table cells while preserving the real DOM nesting."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.tables: list[list[list[tuple[str, str]]]] = []
+        self._table_stack: list[dict[str, Any]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "table":
+            self._table_stack.append({"rows": [], "row": None, "cell": None})
+        elif tag == "tr" and self._table_stack:
+            self._table_stack[-1]["row"] = []
+        elif tag in {"td", "th"} and self._table_stack and self._table_stack[-1]["row"] is not None:
+            self._table_stack[-1]["cell"] = {"tag": tag, "parts": []}
+
+    def handle_data(self, data: str) -> None:
+        if self._table_stack and self._table_stack[-1]["cell"] is not None:
+            self._table_stack[-1]["cell"]["parts"].append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if not self._table_stack:
+            return
+        current = self._table_stack[-1]
+        if tag in {"td", "th"} and current["cell"] is not None:
+            cell = current["cell"]
+            current["row"].append((cell["tag"], " ".join(cell["parts"]).strip()))
+            current["cell"] = None
+        elif tag == "tr" and current["row"] is not None:
+            current["rows"].append(current["row"])
+            current["row"] = None
+        elif tag == "table":
+            self.tables.append(self._table_stack.pop()["rows"])
+
+
+def _direct_table_trades(page: str, external_account_id: str, period: str) -> list[TradePayload]:
+    """Parse the current BoursoBank monthly securities table (no detail URL)."""
+    parser = _MovementTableParser()
+    parser.feed(page)
+    trades: list[TradePayload] = []
+    for table_number, rows in enumerate(parser.tables):
+        if len(rows) < 2:
+            continue
+        headers = [_plain(value).lower() for _, value in rows[0]]
+        # Bourso's responsive markup repeats a hidden value-date cell inside
+        # some rows, so data cells are not always aligned with the 8 headers.
+        # The ISIN column is the reliable anchor: label comes immediately
+        # before it and amount/quantity/price immediately after it.
+        if not any("isin" in value for value in headers):
+            continue
+        for row_number, row in enumerate(rows[1:]):
+            cells = [_plain(value) for _, value in row]
+            isin_index = next(
+                (i for i, value in enumerate(cells) if _ISIN_IN_TEXT_RE.fullmatch(value.upper())),
+                None,
+            )
+            if isin_index is None or isin_index < 1 or isin_index + 2 >= len(cells):
+                continue
+            side = next((parsed for value in cells[:isin_index] if (parsed := _trade_side(value))), None)
+            date = next((parsed for value in cells[:isin_index] if (parsed := _date_value(value))), None)
+            quantity = parse_amount(cells[isin_index + 2])
+            if side is None or date is None or quantity is None or quantity <= 0:
+                continue
+            amount = parse_amount(cells[isin_index + 1])
+            price = parse_amount(cells[isin_index + 3]) if isin_index + 3 < len(cells) else None
+            if price is None or price <= 0:
+                price = abs(amount / quantity) if amount is not None and amount != 0 else None
+            if price is None or price <= 0:
+                continue
+            label = cells[isin_index - 1]
+            isin_match = _ISIN_IN_TEXT_RE.fullmatch(cells[isin_index].upper())
+            trades.append(TradePayload(
+                externalAccountId=external_account_id,
+                externalId=f"bourso-trade:{external_account_id}:{period}:{table_number}:{row_number}",
+                date=date,
+                side=side,
+                label=label[:200],
+                isin=isin_match.group(1) if isin_match else None,
+                quantity=quantity,
+                priceEur=price,
+            ))
+    return trades
 
 
 def _trade_side(operation: str) -> str | None:
@@ -842,7 +936,7 @@ async def _collect_trades(client: httpx.AsyncClient) -> list[TradePayload]:
             log.info("BoursoBank movements unavailable for account %s… (HTTP %s)", account["id"][:8], response.status_code)
             continue
         form_token = extract_form_token(response.text)
-        pages = []
+        pages: list[tuple[str, str]] = []
         monthly_signatures: list[tuple[str, list[dict[str, Any]]]] = []
         # BoursoBank's trading history is a form with one selectable calendar
         # month, not the usual account-movement paginator. Query every month
@@ -863,11 +957,16 @@ async def _collect_trades(client: httpx.AsyncClient) -> list[TradePayload]:
             if monthly.status_code in (401, 403):
                 raise HTTPException(status_code=401, detail="SESSION_EXPIRED")
             if monthly.status_code == 200:
-                pages.append(monthly.text)
+                pages.append((period, monthly.text))
                 signature = _movement_table_signature(monthly.text)
                 if any(item["sampleRows"] for item in signature):
                     monthly_signatures.append((period, signature))
-        history = [row for page in pages for row in _history_rows(page)]
+        direct_trades = [
+            trade for period, page in pages
+            for trade in _direct_table_trades(page, f"bourso_{account['id']}", period)
+        ]
+        trades.extend(direct_trades)
+        history = [row for _, page in pages for row in _history_rows(page)]
         if not history:
             headers = []
             for table_match in _TABLE_RE.finditer(response.text):
