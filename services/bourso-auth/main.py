@@ -813,6 +813,15 @@ async def _collect_trades(client: httpx.AsyncClient) -> list[TradePayload]:
                 account["id"][:8], scripts[:30], api_paths[:30],
             )
             log.info("BoursoBank movements raw fragment (account=%s…): %s", account["id"][:8], response.text[:20000])
+            dated_windows = []
+            for match in re.finditer(r"\b\d{2}[/-]\d{2}[/-]\d{4}\b", response.text):
+                window = response.text[max(0, match.start() - 800):match.start() + 3200]
+                if window not in dated_windows:
+                    dated_windows.append(window)
+                if len(dated_windows) == 2:
+                    break
+            if dated_windows:
+                log.info("BoursoBank movements date windows (account=%s…): %s", account["id"][:8], dated_windows)
         for date, operation, detail_id in history:
             detail = await client.get(f"{base_path}/mouvement/{detail_id}", follow_redirects=True)
             if detail.status_code in (401, 403):
