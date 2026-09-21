@@ -23,6 +23,8 @@ from main import (
     _json_success,
     _strong_auth_params,
     extract_brs_config,
+    extract_api_referer_feature_id,
+    extract_default_api_bearer,
     extract_form_token,
     is_fraud_education_page,
     restore_cookies,
@@ -118,6 +120,14 @@ class ExtractorTest(unittest.TestCase):
         )
         self.assertEqual(
             extract_form_token('<input value="abc.def" name="form[_token]">'), "abc.def"
+        )
+
+    def test_reads_current_trading_api_headers_from_brs_config(self):
+        page = '<script>window.BRS_CONFIG = {"DEFAULT_API_BEARER":"jwt-token", "API_REFERER_FEATURE_ID":"customer.accounts_trading_ord_positions.web_fr_front_20"};</script>'
+        self.assertEqual(extract_default_api_bearer(page), "jwt-token")
+        self.assertEqual(
+            extract_api_referer_feature_id(page),
+            "customer.accounts_trading_ord_positions.web_fr_front_20",
         )
 
     def test_reads_buy_and_sale_lines_from_the_monthly_securities_table(self):
