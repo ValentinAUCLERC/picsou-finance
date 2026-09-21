@@ -688,6 +688,9 @@ _ROW_RE = re.compile(r"<tr\b(?P<attrs>[^>]*)>(?P<row>.*?)</tr>", re.IGNORECASE |
 _CELL_RE = re.compile(r"<t[dh]\b[^>]*>(?P<cell>.*?)</t[dh]>", re.IGNORECASE | re.DOTALL)
 _TAG_RE = re.compile(r"<[^>]+>")
 _DETAIL_ID_RE = re.compile(r"data-modal-alert-behavior=[\"'][^\"']*?(?P<id>\d+)", re.IGNORECASE)
+_CONTINUATION_TOKEN_RE = re.compile(
+    r"data-operations-next-pagination=[\"'](?P<token>[^\"']+)", re.IGNORECASE
+)
 _ISIN_IN_TEXT_RE = re.compile(r"\b([A-Z]{2}[A-Z0-9]{9}\d)\b")
 
 
@@ -786,7 +789,9 @@ async def _collect_trades(client: httpx.AsyncClient) -> list[TradePayload]:
         # PEA and PEA-PME share BoursoBank's `ord` URL namespace. The
         # accountType query string is what switches the movements component
         # to the PEA view.
-        movement_params = {"accountType": "pea"} if account["type"] == "PEA" else {}
+        movement_params = {"rumroute": "accounts.bank.movements"}
+        if account["type"] == "PEA":
+            movement_params["accountType"] = "pea"
         # The public URL is an application shell. Bourso's own movements
         # component asks the server for this hinclude fragment, which contains
         # the list rows and their detail-operation links.
@@ -801,6 +806,21 @@ async def _collect_trades(client: httpx.AsyncClient) -> list[TradePayload]:
         if response.status_code != 200:
             log.info("BoursoBank movements unavailable for account %s… (HTTP %s)", account["id"][:8], response.status_code)
             continue
+        # The initial HTML is only the movement component shell. Its pagination
+        # token is immediately consumed by BoursoBank's own JavaScript to load
+        # the first page of operations; reproduce that request here.
+        continuation = _CONTINUATION_TOKEN_RE.search(response.text)
+        if continuation:
+            fragment = await client.get(
+                base_path + "/mouvements",
+                params={**movement_params, "continuationToken": html_module.unescape(continuation.group("token"))},
+                headers={"X-Requested-With": "XMLHttpRequest"},
+                follow_redirects=True,
+            )
+            if fragment.status_code in (401, 403):
+                raise HTTPException(status_code=401, detail="SESSION_EXPIRED")
+            if fragment.status_code == 200:
+                response = fragment
         history = _history_rows(response.text)
         if not history:
             headers = []
