@@ -603,12 +603,14 @@ async def _confirm_validation(client: httpx.AsyncClient, validation_token: str) 
 
 
 async def _fetch_trading_account(
-    client: httpx.AsyncClient, api_url: str, user_hash: str, account_id: str
+    client: httpx.AsyncClient, api_url: str, user_hash: str, account_id: str,
+    account_path: str | None = None,
 ) -> dict[str, Any]:
     response: httpx.Response | None = None
+    account_api_url, account_user_hash = api_url, user_hash
     for attempt in range(TRADING_SUMMARY_ATTEMPTS):
         response = await client.get(
-            f"{api_url}/_user_/_{user_hash}_/trading/accounts/summary/{account_id}",
+            f"{account_api_url}/_user_/_{account_user_hash}_/trading/accounts/summary/{account_id}",
             params={
                 "_host": "tradingboard.boursobank.com",
                 "position": "ACCOUNTING",
@@ -616,6 +618,22 @@ async def _fetch_trading_account(
             },
             headers={"Accept": "application/json"},
         )
+        # On some profile configurations the dashboard's global BRS_CONFIG is
+        # accepted by the web pages but rejected (404) by the trading service.
+        # The account page carries the account-scoped configuration, so use it
+        # before declaring the trading gateway unavailable.
+        if response.status_code == 404 and attempt == 0 and account_path:
+            account_page = await client.get(
+                account_path,
+                headers={"X-Requested-With": "XMLHttpRequest"},
+                follow_redirects=True,
+            )
+            if account_page.status_code == 200:
+                try:
+                    account_api_url, account_user_hash = extract_brs_config(account_page.text)
+                    log.info("BoursoBank: retrying summary with account-scoped API configuration")
+                except AccountsFormatError:
+                    pass
         # Bourso's trading gateway has been observed returning 404 while its
         # backend is degraded, then 503 on the next request. It is not a page
         # format change: retry it with the other transient gateway failures.
@@ -685,7 +703,10 @@ async def _collect_accounts(client: httpx.AsyncClient) -> list[AccountPayload]:
                 "BoursoBank: loading trading account %s (route=%s; id=%s…)",
                 account["name"], account["route"], account["id"][:8],
             )
-            summary = await _fetch_trading_account(client, api_url, user_hash, account["id"])
+            summary = await _fetch_trading_account(
+                client, api_url, user_hash, account["id"],
+                f"/compte/{account['route']}/{account['id']}",
+            )
             # The trading board is authoritative over the dashboard tile: it is
             # the figure the two reconciliations above were run against.
             entry["balanceEur"] = summary["totalEur"]
