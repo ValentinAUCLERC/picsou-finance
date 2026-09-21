@@ -822,7 +822,7 @@ async def _collect_trades(client: httpx.AsyncClient) -> list[TradePayload]:
         if response.status_code != 200:
             log.info("BoursoBank movements unavailable for account %s… (HTTP %s)", account["id"][:8], response.status_code)
             continue
-        form_token = _form_token(response.text)
+        form_token = extract_form_token(response.text)
         pages = []
         # BoursoBank's trading history is a form with one selectable calendar
         # month, not the usual account-movement paginator. Query every month
