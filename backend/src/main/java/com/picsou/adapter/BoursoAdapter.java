@@ -115,6 +115,19 @@ public class BoursoAdapter implements BoursoPort {
         );
     }
 
+    @Override
+    public List<TradeData> fetchTrades(String sessionState) {
+        return sidecar.postForList(
+            "/trades",
+            Map.of("sessionState", sessionState),
+            TradeData[].class,
+            Duration.ofSeconds(120),
+            "Could not fetch BoursoBank securities movements",
+            BoursoErrorCode.UPSTREAM_UNAVAILABLE,
+            "BoursoBank returned no detailed securities movements"
+        );
+    }
+
     private static String friendlyMessage(BoursoErrorCode code) {
         return switch (code) {
             case INVALID_CREDENTIALS -> "BoursoBank rejected the customer number or password";

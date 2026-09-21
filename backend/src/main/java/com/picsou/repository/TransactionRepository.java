@@ -17,6 +17,8 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
 
     Optional<Transaction> findByIdAndAccountId(Long id, Long accountId);
 
+    Optional<Transaction> findByAccountIdAndExternalTransactionId(Long accountId, String externalTransactionId);
+
     @Query("SELECT COALESCE(SUM(t.amount), 0) FROM Transaction t WHERE t.account.id = :accountId")
     BigDecimal sumAmountByAccountId(@Param("accountId") Long accountId);
 

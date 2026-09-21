@@ -15,6 +15,7 @@ import com.picsou.repository.AccountHoldingRepository;
 import com.picsou.repository.AccountRepository;
 import com.picsou.repository.BoursoSessionRepository;
 import com.picsou.repository.FamilyMemberRepository;
+import com.picsou.repository.TransactionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -53,6 +54,7 @@ class BoursoSyncServiceTest {
     @Mock AccountRepository accountRepository;
     @Mock AccountHoldingRepository holdingRepository;
     @Mock FamilyMemberRepository memberRepository;
+    @Mock TransactionRepository transactionRepository;
     @Mock AccountService accountService;
     @Mock OpenFigiIsinConverter isinConverter;
     @Mock CryptoEncryption encryption;
@@ -472,6 +474,7 @@ class BoursoSyncServiceTest {
             accountRepository,
             holdingRepository,
             memberRepository,
+            transactionRepository,
             accountService,
             isinConverter,
             encryption,

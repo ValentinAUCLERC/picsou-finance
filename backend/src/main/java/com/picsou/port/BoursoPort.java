@@ -3,6 +3,7 @@ package com.picsou.port;
 import com.picsou.model.AccountType;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -38,6 +39,9 @@ public interface BoursoPort {
      */
     List<AccountData> fetchAccounts(String sessionState);
 
+    /** Executed securities lines used to reconstruct individual acquisition lots. */
+    List<TradeData> fetchTrades(String sessionState);
+
     record InitiateResult(
         String processId,
         boolean mfaRequired,
@@ -72,5 +76,17 @@ public interface BoursoPort {
         BigDecimal cashBalance,
         List<Position> positions,
         boolean snapshotComplete
+    ) {}
+
+    record TradeData(
+        String externalAccountId,
+        String externalId,
+        LocalDate date,
+        String side,
+        String label,
+        String isin,
+        BigDecimal quantity,
+        BigDecimal priceEur,
+        BigDecimal feesEur
     ) {}
 }

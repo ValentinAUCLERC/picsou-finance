@@ -10,12 +10,15 @@ import com.picsou.model.AccountType;
 import com.picsou.model.BoursoSession;
 import com.picsou.model.BoursoSyncStatus;
 import com.picsou.model.FamilyMember;
+import com.picsou.model.Transaction;
+import com.picsou.model.TransactionType;
 import com.picsou.port.BoursoErrorCode;
 import com.picsou.port.BoursoPort;
 import com.picsou.repository.AccountHoldingRepository;
 import com.picsou.repository.AccountRepository;
 import com.picsou.repository.BoursoSessionRepository;
 import com.picsou.repository.FamilyMemberRepository;
+import com.picsou.repository.TransactionRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -77,6 +80,7 @@ public class BoursoSyncService {
     private final AccountRepository accountRepository;
     private final AccountHoldingRepository holdingRepository;
     private final FamilyMemberRepository memberRepository;
+    private final TransactionRepository transactionRepository;
     private final AccountService accountService;
     private final OpenFigiIsinConverter isinConverter;
     private final CryptoEncryption encryption;
@@ -89,6 +93,7 @@ public class BoursoSyncService {
         AccountRepository accountRepository,
         AccountHoldingRepository holdingRepository,
         FamilyMemberRepository memberRepository,
+        TransactionRepository transactionRepository,
         AccountService accountService,
         OpenFigiIsinConverter isinConverter,
         CryptoEncryption encryption,
@@ -100,6 +105,7 @@ public class BoursoSyncService {
         this.accountRepository = accountRepository;
         this.holdingRepository = holdingRepository;
         this.memberRepository = memberRepository;
+        this.transactionRepository = transactionRepository;
         this.accountService = accountService;
         this.isinConverter = isinConverter;
         this.encryption = encryption;
@@ -205,6 +211,7 @@ public class BoursoSyncService {
             List<PreparedAccount> prepared = prepareAccounts(fetched);
             if (commitAccounts(job, prepared)) {
                 log.info("BoursoBank sync completed (member={}; accounts={})", job.memberId(), prepared.size());
+                importTrades(job);
             } else {
                 log.info("Discarded stale BoursoBank sync result (member={})", job.memberId());
             }
@@ -216,6 +223,48 @@ public class BoursoSyncService {
             markFailed(job, BoursoErrorCode.INTERNAL_ERROR);
             log.error("BoursoBank sync failed unexpectedly (member={})", job.memberId(), ex);
         }
+    }
+
+    /** Movement history is supplementary: a scraping change must not invalidate balances. */
+    private void importTrades(SyncJob job) {
+        try {
+            List<BoursoPort.TradeData> trades = port.fetchTrades(job.plainState());
+            if (trades.isEmpty()) return;
+            txTemplate.executeWithoutResult(status -> {
+                int inserted = 0;
+                for (BoursoPort.TradeData trade : trades) {
+                    if (trade == null || trade.externalAccountId() == null || trade.externalId() == null
+                        || trade.date() == null || trade.quantity() == null || trade.quantity().signum() <= 0
+                        || trade.priceEur() == null || trade.priceEur().signum() < 0) continue;
+                    Account account = accountRepository.findByExternalAccountIdAndMemberId(trade.externalAccountId(), job.memberId()).orElse(null);
+                    if (account == null || !account.getType().isInvestment()
+                        || transactionRepository.findByAccountIdAndExternalTransactionId(account.getId(), trade.externalId()).isPresent()) continue;
+                    TransactionType side = "SELL".equals(trade.side()) ? TransactionType.SELL : TransactionType.BUY;
+                    String ticker = trade.isin() == null || trade.isin().isBlank() ? null : resolveTradeTicker(trade.isin());
+                    if (ticker == null) continue;
+                    BigDecimal fees = trade.feesEur() == null ? BigDecimal.ZERO : trade.feesEur();
+                    BigDecimal gross = trade.quantity().multiply(trade.priceEur());
+                    BigDecimal amount = side == TransactionType.BUY ? gross.add(fees).negate() : gross.subtract(fees);
+                    transactionRepository.save(Transaction.builder()
+                        .account(account).date(trade.date()).description(trade.label()).amount(amount)
+                        .nativeCurrency("EUR").externalTransactionId(trade.externalId()).isManual(false)
+                        .txType(side).ticker(ticker).name(trade.label()).quantity(trade.quantity())
+                        .pricePerUnit(trade.priceEur()).fees(fees).build());
+                    inserted++;
+                }
+                if (inserted > 0) log.info("BoursoBank imported {} detailed trade line(s) (member={})", inserted, job.memberId());
+            });
+        } catch (RuntimeException ex) {
+            log.warn("BoursoBank detailed movements were not imported (member={}): {}", job.memberId(), ex.getMessage());
+        }
+    }
+
+    private String resolveTradeTicker(String isin) {
+        String normalized = normalizeIsin(isin);
+        if (normalized == null) return null;
+        OpenFigiIsinConverter.TickerResult resolved = isinConverter.resolve(normalized);
+        return resolved != null && resolved.ticker() != null && !resolved.ticker().isBlank()
+            ? resolved.ticker().trim() : normalized;
     }
 
     private boolean markRunning(SyncJob job) {

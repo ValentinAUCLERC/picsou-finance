@@ -33,8 +33,10 @@ import re
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, Literal
+from urllib.parse import urljoin
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -47,6 +49,7 @@ from accounts_parser import (
     AccountsFormatError,
     describe_payload,
     guard_symbol_collisions,
+    parse_amount,
     parse_dashboard,
     parse_trading_summary,
 )
@@ -190,6 +193,21 @@ class AccountsRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     sessionState: str = Field(min_length=2, max_length=2_000_000)
+
+
+class TradePayload(BaseModel):
+    """One executed securities line, never an aggregate portfolio position."""
+    model_config = ConfigDict(extra="forbid")
+
+    externalAccountId: str = Field(min_length=1, max_length=100)
+    externalId: str = Field(min_length=1, max_length=128)
+    date: str
+    side: Literal["BUY", "SELL"]
+    label: str = Field(min_length=1, max_length=200)
+    isin: str | None = Field(default=None, max_length=12)
+    quantity: Decimal
+    priceEur: Decimal
+    feesEur: Decimal = Decimal("0")
 
 
 class PositionPayload(BaseModel):
@@ -665,6 +683,123 @@ async def _collect_accounts(client: httpx.AsyncClient) -> list[AccountPayload]:
     return [AccountPayload.model_validate(entry) for entry in payloads]
 
 
+_TABLE_RE = re.compile(r"<table\b[^>]*>(?P<table>.*?)</table>", re.IGNORECASE | re.DOTALL)
+_ROW_RE = re.compile(r"<tr\b(?P<attrs>[^>]*)>(?P<row>.*?)</tr>", re.IGNORECASE | re.DOTALL)
+_CELL_RE = re.compile(r"<t[dh]\b[^>]*>(?P<cell>.*?)</t[dh]>", re.IGNORECASE | re.DOTALL)
+_TAG_RE = re.compile(r"<[^>]+>")
+_DETAIL_ID_RE = re.compile(r"data-modal-alert-behavior=[\"'][^\"']*?(?P<id>\d+)", re.IGNORECASE)
+_ISIN_IN_TEXT_RE = re.compile(r"\b([A-Z]{2}[A-Z0-9]{9}\d)\b")
+
+
+def _plain(markup: str) -> str:
+    return " ".join(html_module.unescape(_TAG_RE.sub(" ", markup)).split())
+
+
+def _date_value(raw: str) -> str | None:
+    raw = _plain(raw)
+    for pattern in ("%d/%m/%Y", "%d/%m/%y"):
+        try:
+            return datetime.strptime(raw, pattern).date().isoformat()
+        except ValueError:
+            pass
+    return None
+
+
+def _history_rows(page: str) -> list[tuple[str, str, str]]:
+    """Return (date, operation label, detail id) rows from Bourso's movements table."""
+    out: list[tuple[str, str, str]] = []
+    for table_match in _TABLE_RE.finditer(page):
+        rows = list(_ROW_RE.finditer(table_match.group("table")))
+        if not rows:
+            continue
+        header = [_plain(cell.group("cell")).lower() for cell in _CELL_RE.finditer(rows[0].group("row"))]
+        date_index = next((i for i, value in enumerate(header) if "date" in value), None)
+        label_index = next((i for i, value in enumerate(header) if "nature" in value or "opération" in value or "operation" in value), None)
+        if date_index is None or label_index is None:
+            continue
+        for row in rows[1:]:
+            detail = _DETAIL_ID_RE.search(row.group(0))
+            if not detail:
+                continue
+            cells = [_plain(cell.group("cell")) for cell in _CELL_RE.finditer(row.group("row"))]
+            if max(date_index, label_index) >= len(cells):
+                continue
+            date = _date_value(cells[date_index])
+            if date:
+                out.append((date, cells[label_index], detail.group("id")))
+    return out
+
+
+def _trade_side(operation: str) -> str | None:
+    normalized = _plain(operation).lower()
+    if any(word in normalized for word in ("vente", "rachat", "désinvest", "desinvest")):
+        return "SELL"
+    if any(word in normalized for word in ("achat", "souscription", "prélèvement", "prelevement", "versement")):
+        return "BUY"
+    return None
+
+
+def _detail_trades(page: str, external_account_id: str, operation_id: str, date: str, operation: str) -> list[TradePayload]:
+    side = _trade_side(operation)
+    if side is None:
+        return []
+    trades: list[TradePayload] = []
+    # The detail table is the only Bourso page which has one row per security:
+    # label, value date, unit price, quantity, total. Ignore all other tables.
+    for table_match in _TABLE_RE.finditer(page):
+        rows = list(_ROW_RE.finditer(table_match.group("table")))
+        for row_number, row in enumerate(rows):
+            cells = [_plain(cell.group("cell")) for cell in _CELL_RE.finditer(row.group("row"))]
+            if len(cells) < 5:
+                continue
+            price = parse_amount(cells[2])
+            quantity = parse_amount(cells[3])
+            if price is None or quantity is None or price < 0 or quantity <= 0:
+                continue
+            label = cells[0]
+            isin_match = _ISIN_IN_TEXT_RE.search(label.upper())
+            trades.append(TradePayload(
+                externalAccountId=external_account_id,
+                externalId=f"bourso-trade:{external_account_id}:{operation_id}:{row_number}",
+                date=date,
+                side=side,
+                label=label[:200],
+                isin=isin_match.group(1) if isin_match else None,
+                quantity=quantity,
+                priceEur=price,
+            ))
+    return trades
+
+
+async def _collect_trades(client: httpx.AsyncClient) -> list[TradePayload]:
+    """Read every detailed PEA/CTO movement without treating a partial history as holdings data."""
+    home = await _home(client)
+    if _LOGGED_IN_MARKER not in home:
+        raise HTTPException(status_code=401, detail="SESSION_EXPIRED")
+    dashboard = await client.get(ACCOUNTS_PATH, follow_redirects=True)
+    accounts, _ = parse_dashboard(dashboard.text)
+    trades: list[TradePayload] = []
+    for account in accounts:
+        if account["section"] != "trading":
+            continue
+        route = "pea" if "PEA" in account["name"].upper().replace("_", " ") else "ord"
+        base_path = f"/compte/{route}/{account['id']}"
+        response = await client.get(base_path + "/mouvements", follow_redirects=True)
+        if response.status_code in (401, 403):
+            raise HTTPException(status_code=401, detail="SESSION_EXPIRED")
+        if response.status_code != 200:
+            log.info("BoursoBank movements unavailable for account %s… (HTTP %s)", account["id"][:8], response.status_code)
+            continue
+        for date, operation, detail_id in _history_rows(response.text):
+            detail = await client.get(f"{base_path}/mouvement/{detail_id}", follow_redirects=True)
+            if detail.status_code in (401, 403):
+                raise HTTPException(status_code=401, detail="SESSION_EXPIRED")
+            if detail.status_code == 200:
+                trades.extend(_detail_trades(detail.text, f"bourso_{account['id']}", detail_id, date, operation))
+    log.info("BoursoBank parsed %d detailed trade line(s)", len(trades))
+    return trades
+
+
 # ─── Routes ─────────────────────────────────────────────────────────────────
 
 
@@ -788,6 +923,27 @@ async def accounts(req: AccountsRequest) -> list[AccountPayload]:
         raise HTTPException(status_code=502, detail="UPSTREAM_UNAVAILABLE") from exc
     except Exception as exc:
         log.exception("Unexpected BoursoBank accounts failure")
+        raise HTTPException(status_code=500, detail="INTERNAL_ERROR") from exc
+    finally:
+        await client.aclose()
+
+
+@app.post("/trades", response_model=list[TradePayload])
+async def trades(req: AccountsRequest) -> list[TradePayload]:
+    client = _new_client()
+    try:
+        restore_cookies(client, req.sessionState)
+        return await _collect_trades(client)
+    except AccountsFormatError as exc:
+        log.warning("BoursoBank movements payload rejected (code=%s): %s", exc.code, exc)
+        raise HTTPException(status_code=502, detail=exc.code) from exc
+    except HTTPException:
+        raise
+    except httpx.HTTPError as exc:
+        log.warning("BoursoBank movements fetch failed", exc_info=True)
+        raise HTTPException(status_code=502, detail="UPSTREAM_UNAVAILABLE") from exc
+    except Exception as exc:
+        log.exception("Unexpected BoursoBank movements failure")
         raise HTTPException(status_code=500, detail="INTERNAL_ERROR") from exc
     finally:
         await client.aclose()
